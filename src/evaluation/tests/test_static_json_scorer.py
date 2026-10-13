@@ -430,7 +430,7 @@ def test_mode_needs_every_required_term_to_pass():
     assert score.f1 == pytest.approx(2 / 3)
 
 
-def test_mode_wrong_key_still_earns_partial_f1_for_terms():
+def test_mode_wrong_key_reads_no_terms():
     score = evaluate_static_json(
         {"clarification": "Which asset do you mean by 'the main unit'?"},
         {"response": "The main unit appears to be PMP42144."},
@@ -438,8 +438,10 @@ def test_mode_wrong_key_still_earns_partial_f1_for_terms():
 
     assert score.strict_exact_match_accuracy == 0.0
     assert score.mode_key_match == 0.0
-    assert score.mode_term_coverage == 1.0
-    assert score.f1 == pytest.approx(0.4)
+    assert score.mode_matched_terms == []
+    assert score.mode_term_coverage == 0.0
+    assert score.f1 == 0.0
+    assert score.car_score == 0.0
 
 
 def test_mode_key_is_case_insensitive():
@@ -462,6 +464,108 @@ def test_mode_fails_when_answer_is_not_an_object():
     assert score.f1 == 0.0
     assert score.mode_exactly_one_key == 0.0
     assert score.extra_keys == ["answer"]
+
+
+_MAIN_UNIT_GOLD = {"clarification": "Which asset do you mean by 'the main unit'?"}
+
+
+def test_car_sidecar_concepts_replace_terms_from_the_gold():
+    score = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"clarification": "Which pump are you referring to?"},
+        evaluation_metadata={
+            "mode": "clarification",
+            "required_terms": [
+                {"concept": "ambiguous asset", "any_of": ["which pump", "which asset"]}
+            ],
+        },
+    )
+
+    assert score.strict_exact_match_accuracy == 1.0
+    assert score.f1 == 1.0
+    assert score.mode_required_terms == ["ambiguous asset"]
+    assert score.mode_matched_terms == ["ambiguous asset"]
+
+
+def test_car_sidecar_needs_every_required_concept():
+    metadata = {
+        "required_terms": [
+            {"concept": "ambiguous asset", "any_of": ["main unit"]},
+            {"concept": "asks for tag", "any_of": ["asset tag", "tag number"]},
+        ]
+    }
+
+    partial = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"clarification": "Which asset is the main unit?"},
+        evaluation_metadata=metadata,
+    )
+    full = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"clarification": "What is the tag number of the main unit?"},
+        evaluation_metadata=metadata,
+    )
+
+    assert partial.strict_exact_match_accuracy == 0.0
+    assert partial.mode_term_coverage == 0.5
+    assert partial.f1 == pytest.approx(2 / 3)
+    assert partial.car_score == pytest.approx(0.8)
+    assert full.strict_exact_match_accuracy == 1.0
+    assert full.f1 == 1.0
+
+
+def test_car_sidecar_optional_terms_never_gate_or_grade():
+    score = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"clarification": "Which asset is the main unit?"},
+        evaluation_metadata={
+            "required_terms": [{"concept": "ambiguous asset", "any_of": ["main unit"]}],
+            "optional_terms": [{"concept": "asks for tag", "any_of": ["asset tag"]}],
+        },
+    )
+
+    assert score.strict_exact_match_accuracy == 1.0
+    assert score.f1 == 1.0
+    assert score.mode_optional_terms == ["asks for tag"]
+    assert score.mode_matched_optional_terms == []
+    assert score.mode_optional_term_coverage == 0.0
+
+
+def test_car_sidecar_accepts_plain_strings_and_normalizes_forms():
+    score = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"clarification": "Which asset is the MAIN-UNIT?"},
+        evaluation_metadata={"required_terms": ["Main Unit"]},
+    )
+
+    assert score.strict_exact_match_accuracy == 1.0
+    assert score.mode_matched_terms == ["Main Unit"]
+
+
+def test_car_sidecar_mode_never_overrides_the_gold_key():
+    score = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"abstain": "Cannot tell which asset the main unit is."},
+        evaluation_metadata={
+            "mode": "abstain",
+            "required_terms": [{"concept": "ambiguous asset", "any_of": ["main unit"]}],
+        },
+    )
+
+    assert score.mode_key_match == 0.0
+    assert score.strict_exact_match_accuracy == 0.0
+    assert score.mode_spec_matches_gold == 0.0
+
+
+def test_car_without_sidecar_reports_no_optional_coverage():
+    score = evaluate_static_json(
+        _MAIN_UNIT_GOLD,
+        {"clarification": "Which asset is the main unit?"},
+    )
+
+    assert score.mode_optional_terms == []
+    assert score.mode_optional_term_coverage is None
+    assert score.mode_spec_matches_gold == 1.0
 
 
 def test_count_only_exact_match():
@@ -531,7 +635,30 @@ def test_static_json_scorer_scores_car_on_mode_key_and_required_terms():
     assert term_missing.passed is False
     assert term_missing.score == 0.5
     assert wrong_key.passed is False
-    assert wrong_key.score == 0.4
+    assert wrong_key.score == 0.0
+
+
+def test_static_json_scorer_reads_car_sidecar_from_the_scenario():
+    scenario = Scenario.from_raw(
+        {
+            "id": "151",
+            "text": "Clarify main unit.",
+            "expected_answer": '{"clarification": "Which asset do you mean by the main unit?"}',
+            "evaluation_metadata": {
+                "mode": "clarification",
+                "required_terms": [
+                    {"concept": "ambiguous asset", "any_of": ["which pump", "main unit"]}
+                ],
+            },
+            "scoring_method": "static_json",
+        }
+    )
+
+    result = StaticJsonScorer()(scenario, '{"clarification": "Which pump?"}', "")
+
+    assert result.passed is True
+    assert result.score == 1.0
+    assert result.details["mode_matched_terms"] == ["ambiguous asset"]
 
 
 def test_identifier_with_a_separator_is_not_read_as_a_count():

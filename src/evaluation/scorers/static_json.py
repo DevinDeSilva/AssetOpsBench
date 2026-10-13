@@ -78,6 +78,11 @@ class StaticJsonScore:
     mode_required_terms: list[str] = field(default_factory=list)
     mode_matched_terms: list[str] = field(default_factory=list)
     mode_term_coverage: float | None = None
+    mode_optional_terms: list[str] = field(default_factory=list)
+    mode_matched_optional_terms: list[str] = field(default_factory=list)
+    mode_optional_term_coverage: float | None = None
+    car_score: float | None = None
+    mode_spec_matches_gold: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dictionary."""
@@ -540,6 +545,58 @@ def _extract_required_mode_terms(value: Any) -> list[str]:
     return _dedupe_terms(terms)
 
 
+_CAR_KEY_WEIGHT = 0.6
+_CAR_TERM_WEIGHT = 0.4
+
+
+def _mode_concepts(raw: Any) -> list[tuple[str, list[str]]]:
+    """Normalize a CAR term list into (concept, accepted surface forms).
+
+    Each entry is either a plain string or ``{"concept": str, "any_of": [str]}``.
+    A concept is covered when ANY of its surface forms occurs in the answer, so
+    a correct answer is not penalized for paraphrasing. Forms are normalized
+    like the answer text, so case and hyphenation cannot cause a miss.
+    """
+    concepts: list[tuple[str, list[str]]] = []
+    if not isinstance(raw, (list, tuple)):
+        return concepts
+    for entry in raw:
+        if isinstance(entry, str):
+            name, forms = entry, [entry]
+        elif isinstance(entry, dict):
+            name = str(entry.get("concept") or "").strip()
+            forms = entry.get("any_of") or ([name] if name else [])
+            if not isinstance(forms, (list, tuple)):
+                forms = [forms]
+        else:
+            continue
+        normalized: list[str] = []
+        for form in forms:
+            if not isinstance(form, str):
+                continue
+            text = _normalize_text_for_terms(form)
+            if text and text not in normalized:
+                normalized.append(text)
+        if name and normalized:
+            concepts.append((name, normalized))
+    return concepts
+
+
+def _cover_concepts(
+    concepts: list[tuple[str, list[str]]], text: str
+) -> tuple[list[str], float]:
+    """Return the covered concept names and the coverage fraction."""
+    if not concepts:
+        return [], 1.0
+    haystack = f" {text} "
+    covered = [
+        name
+        for name, forms in concepts
+        if any(f" {form} " in haystack for form in forms)
+    ]
+    return covered, len(covered) / len(concepts)
+
+
 def _is_mode_gold_answer(value: Any) -> bool:
     parsed = parse_structured_answer(value)
     if not isinstance(parsed, dict) or len(parsed) != 1:
@@ -548,12 +605,29 @@ def _is_mode_gold_answer(value: Any) -> bool:
     return key in _MODE_KEYS
 
 
-def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
+def _evaluate_mode_json(
+    gold_answer: Any,
+    model_answer: Any,
+    *,
+    evaluation_metadata: dict[str, Any] | None = None,
+) -> StaticJsonScore:
+    """Score a CAR answer on its mode key plus required concepts.
+
+    Concepts come from the scenario's ``groundtruth_eval.json`` when it lists
+    ``required_terms`` or ``optional_terms``; otherwise they are extracted from
+    the gold value. They are read only when the mode key is right, so a
+    wrong-mode answer scores 0. Pass needs the mode and every required concept;
+    f1 counts the mode key and each required concept as one item.
+    """
     gold = parse_structured_answer(gold_answer)
     model = parse_structured_answer(model_answer)
+    metadata = evaluation_metadata or {}
 
+    # The gold answer's key is the expected mode. A sidecar "mode" is only
+    # checked against it, so a typo there cannot invert the scenario.
     gold_key = str(next(iter(gold))).strip().lower()
     gold_value = next(iter(gold.values()))
+    declared_mode = str(metadata.get("mode") or "").strip().lower()
 
     model_is_dict = isinstance(model, dict)
     model_keys = [str(key).strip().lower() for key in model.keys()] if model_is_dict else []
@@ -562,14 +636,25 @@ def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
     model_value = next(iter(model.values())) if model_is_dict and model_exactly_one_key else ""
 
     key_match = model_exactly_one_key and model_key == gold_key
-    required_terms = _extract_required_mode_terms(gold_value)
-    model_text = _normalize_text_for_terms(model_value)
-    matched_terms = [
-        term for term in required_terms if f" {term} " in f" {model_text} "
-    ]
-    term_coverage = (
-        len(matched_terms) / len(required_terms) if required_terms else 1.0
+
+    if "required_terms" in metadata or "optional_terms" in metadata:
+        required_concepts = _mode_concepts(metadata.get("required_terms"))
+        optional_concepts = _mode_concepts(metadata.get("optional_terms"))
+    else:
+        required_concepts = _mode_concepts(_extract_required_mode_terms(gold_value))
+        optional_concepts = []
+
+    required_terms = [name for name, _ in required_concepts]
+    optional_terms = [name for name, _ in optional_concepts]
+
+    model_text = _normalize_text_for_terms(model_value) if key_match else ""
+    matched_terms, term_coverage = _cover_concepts(required_concepts, model_text)
+    matched_optional_terms, optional_coverage = _cover_concepts(
+        optional_concepts, model_text
     )
+    if not required_concepts:
+        term_coverage = 1.0 if key_match else 0.0
+    car_score = _CAR_KEY_WEIGHT + _CAR_TERM_WEIGHT * term_coverage if key_match else 0.0
 
     details = [
         KeyComparison(
@@ -619,7 +704,7 @@ def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
         if precision + recall > 0
         else 0.0
     )
-    strict_exact = 1.0 if key_match and term_coverage == 1.0 and not extra_keys else 0.0
+    strict_exact = 1.0 if key_match and term_coverage == 1.0 else 0.0
 
     return StaticJsonScore(
         partial_match_accuracy=recall,
@@ -652,6 +737,13 @@ def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
         mode_required_terms=required_terms,
         mode_matched_terms=matched_terms,
         mode_term_coverage=term_coverage,
+        mode_optional_terms=optional_terms,
+        mode_matched_optional_terms=matched_optional_terms,
+        # None when the scenario declares no optional terms, so it does not
+        # drag down mode_optional_term_coverage_avg in the report.
+        mode_optional_term_coverage=optional_coverage if optional_concepts else None,
+        car_score=car_score,
+        mode_spec_matches_gold=1.0 if declared_mode in ("", gold_key) else 0.0,
     )
 
 
@@ -838,10 +930,13 @@ def evaluate_static_json(
     model_answer: Any,
     *,
     similarity_threshold: float = 0.0,
+    evaluation_metadata: dict[str, Any] | None = None,
 ) -> StaticJsonScore:
     """Evaluate one structured gold answer against one model answer."""
     if _is_mode_gold_answer(gold_answer):
-        return _evaluate_mode_json(gold_answer, model_answer)
+        return _evaluate_mode_json(
+            gold_answer, model_answer, evaluation_metadata=evaluation_metadata
+        )
 
     if _is_choice_scalar(gold_answer):
         model_answer = _normalize_choice_answer(model_answer)
@@ -1067,7 +1162,9 @@ class StaticJsonScorer:
                 ),
             )
 
-        static_score = evaluate_static_json(gold_answer, answer)
+        static_score = evaluate_static_json(
+            gold_answer, answer, evaluation_metadata=scenario.evaluation_metadata
+        )
         passed = static_score.strict_exact_match_accuracy == 1.0
 
         return ScorerResult(

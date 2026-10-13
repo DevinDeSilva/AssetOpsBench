@@ -100,9 +100,8 @@ The evaluator then joins trajectories and ground truth by scenario id.
 
 Scenario folders may also include `groundtruth_eval.json`, which carries
 scorer-specific metadata alongside the canonical answer in `groundtruth.txt`.
-The `static_json` scorer does not read it. For clarification-abstain-response
-(CAR) scenarios the expected mode is the single key of `groundtruth.txt`, and
-the required terms are extracted from the value under that key.
+The `static_json` scorer reads it for clarification-abstain-response (CAR)
+scenarios, where it lists the concepts a correct answer must cover.
 
 Example `groundtruth.txt`:
 
@@ -111,6 +110,30 @@ Example `groundtruth.txt`:
   "clarification": "Which asset do you mean by 'the main unit'?"
 }
 ```
+
+Example `groundtruth_eval.json`:
+
+```json
+{
+  "mode": "clarification",
+  "required_terms": [
+    {"concept": "ambiguous asset", "any_of": ["main unit", "which asset", "which pump"]}
+  ],
+  "optional_terms": [
+    {"concept": "asks for tag", "any_of": ["asset tag", "tag number"]}
+  ]
+}
+```
+
+| Field            | Meaning                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `mode`           | Expected top-level key. Checked against the key of `groundtruth.txt`, never used instead of it |
+| `required_terms` | Concepts that gate pass and count toward the score                                       |
+| `optional_terms` | Concepts reported for analysis only; they never affect pass or score                     |
+
+Each concept is `{"concept": <name>, "any_of": [<surface forms>]}` or a plain
+string (a concept whose only form is itself). Other fields, such as `_comment`,
+are ignored.
 
 ---
 
@@ -225,43 +248,54 @@ The scorer marks a scenario as passed only when the structured answer is a stric
 ### CAR metrics and pass criteria
 
 For CAR scenarios, the scorer evaluates the answer as a mode-selection task plus
-required-term coverage. The model answer should be a single JSON object using
-exactly one of these top-level keys:
+concept coverage. The model answer should be a single JSON object using exactly
+one of these top-level keys:
 
 ```text
 response | clarification | abstain
 ```
 
-The required terms are extracted from the gold value: quoted phrases, asset or
-fault identifiers (e.g. `PMP42144`), a leading `yes` / `no` stance, and a small
-allowlist of domain terms. Matching is case-insensitive on normalised text.
+The expected mode is the single key of `groundtruth.txt`. The required concepts
+come from `groundtruth_eval.json` when it lists `required_terms` or
+`optional_terms`. Otherwise they are extracted from the gold value: quoted
+phrases, asset or fault identifiers (e.g. `PMP42144`), a leading `yes` / `no`
+stance, and a small allowlist of domain terms, each a concept with one form.
+
+A concept is covered when any of its surface forms appears as whole words in
+the value under the model's key, after lowercasing and replacing punctuation
+with spaces. Concepts are read only when the mode key is right, so a wrong-mode
+answer covers none.
 
 A CAR scenario passes when:
 
 1. the model returns a JSON object with exactly one top-level key,
 2. that key matches the expected mode (case-insensitive), and
-3. every required term appears in the value under that key.
+3. every required concept is covered.
 
-The score is the F1 over the mode key plus each required term. Gold has
-`1 + len(required_terms)` entries; the model side has the same plus any extra
-top-level keys. For gold `{"clarification": "Which asset do you mean by 'the
-main unit'?"}` (one required term, `main unit`):
+The score is the F1 over the mode key plus each required concept: with the right
+mode and `k` of `n` concepts covered it is `(1 + k) / (1 + n)`, and a wrong mode
+scores 0. With the example `groundtruth_eval.json` above (one required concept):
 
 | Model answer                                         | Passed | Score |
 | ---------------------------------------------------- | ------ | ----- |
-| `{"clarification": "Which asset is the main unit?"}` | yes    | 1.0   |
-| `{"clarification": "Which pump?"}`                   | no     | 0.5   |
-| `{"response": "The main unit is PMP42144."}`         | no     | 0.4   |
+| `{"clarification": "Which pump do you mean?"}`       | yes    | 1.0   |
+| `{"clarification": "Could you clarify?"}`            | no     | 0.5   |
+| `{"response": "The main unit is PMP42144."}`         | no     | 0.0   |
 
 Additional CAR report fields:
 
-| Metric                 | Meaning                                                    |
-| ---------------------- | ---------------------------------------------------------- |
-| `mode_key_match`       | 1.0 when the returned mode key matches the expected mode   |
-| `mode_exactly_one_key` | 1.0 when the answer has exactly one top-level key          |
-| `mode_required_terms`  | Required terms extracted from the gold answer value        |
-| `mode_matched_terms`   | Required terms found in the model answer value             |
-| `mode_term_coverage`   | Fraction of required terms found                           |
+| Metric                        | Meaning                                                              |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `mode_key_match`              | 1.0 when the returned mode key matches the expected mode             |
+| `mode_exactly_one_key`        | 1.0 when the answer has exactly one top-level key                    |
+| `mode_required_terms`         | Required concept names                                               |
+| `mode_matched_terms`          | Required concepts covered by the answer                              |
+| `mode_term_coverage`          | Fraction of required concepts covered                                |
+| `mode_optional_terms`         | Optional concept names                                               |
+| `mode_matched_optional_terms` | Optional concepts covered by the answer                              |
+| `mode_optional_term_coverage` | Fraction of optional concepts covered, or null if none are declared  |
+| `car_score`                   | `0.6 + 0.4 * mode_term_coverage` with the right mode, else 0; reported only |
+| `mode_spec_matches_gold`      | 0.0 when `groundtruth_eval.json` declares a mode the gold does not use |
 
 ---
 
