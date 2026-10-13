@@ -101,8 +101,9 @@ The evaluator then joins trajectories and ground truth by scenario id.
 Scenario folders may also include `groundtruth_eval.json`, which carries
 scorer-specific metadata alongside the canonical answer in `groundtruth.txt`.
 Clarification-abstain-response (CAR) scenarios ship one, but the `static_json`
-scorer does not read it: a CAR answer is scored on its top-level mode key, and
-the expected mode is the single key of `groundtruth.txt`.
+scorer does not read it: the expected mode is the single key of
+`groundtruth.txt`, and the required terms are extracted from the value under
+that key.
 
 Example `groundtruth.txt`:
 
@@ -224,31 +225,44 @@ The scorer marks a scenario as passed only when the structured answer is a stric
 
 ### CAR metrics and pass criteria
 
-For CAR scenarios, the scorer evaluates only the mode the model chose. The
-model answer should be a single JSON object using exactly one of these
-top-level keys:
+For CAR scenarios, the scorer evaluates the answer as a mode-selection task plus
+required-term coverage. The model answer should be a single JSON object using
+exactly one of these top-level keys:
 
 ```text
 response | clarification | abstain
 ```
 
+The required terms are extracted from the gold value: quoted phrases, asset or
+fault identifiers (e.g. `PMP42144`), a leading `yes` / `no` stance, and a small
+allowlist of domain terms. Matching is case-insensitive on normalised text.
+
 A CAR scenario passes when:
 
-1. the model returns a JSON object with exactly one top-level key, and
-2. that key matches the expected mode (case-insensitive).
+1. the model returns a JSON object with exactly one top-level key,
+2. that key matches the expected mode (case-insensitive), and
+3. every required term appears in the value under that key.
 
-The value under the key is not scored. `score`, `f1` and
-`strict_exact_match_accuracy` are all 1.0 on a pass and 0.0 otherwise.
+The score is the F1 over the mode key plus each required term. Gold has
+`1 + len(required_terms)` entries; the model side has the same plus any extra
+top-level keys. For gold `{"clarification": "Which asset do you mean by 'the
+main unit'?"}` (one required term, `main unit`):
+
+| Model answer                                         | Passed | Score |
+| ---------------------------------------------------- | ------ | ----- |
+| `{"clarification": "Which asset is the main unit?"}` | yes    | 1.0   |
+| `{"clarification": "Which pump?"}`                   | no     | 0.5   |
+| `{"response": "The main unit is PMP42144."}`         | no     | 0.4   |
 
 Additional CAR report fields:
 
-| Metric                 | Meaning                                                              |
-| ---------------------- | -------------------------------------------------------------------- |
-| `mode_key_match`       | 1.0 when the returned mode key matches the expected mode             |
-| `mode_exactly_one_key` | 1.0 when the answer has exactly one top-level key                    |
-| `mode_required_terms`  | Diagnostic terms extracted from the gold answer value                |
-| `mode_matched_terms`   | Diagnostic terms found in the model answer value                     |
-| `mode_term_coverage`   | Fraction of diagnostic terms found; reported only, does not affect pass or score |
+| Metric                 | Meaning                                                    |
+| ---------------------- | ---------------------------------------------------------- |
+| `mode_key_match`       | 1.0 when the returned mode key matches the expected mode   |
+| `mode_exactly_one_key` | 1.0 when the answer has exactly one top-level key          |
+| `mode_required_terms`  | Required terms extracted from the gold answer value        |
+| `mode_matched_terms`   | Required terms found in the model answer value             |
+| `mode_term_coverage`   | Fraction of required terms found                           |
 
 ---
 
