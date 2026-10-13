@@ -100,10 +100,9 @@ The evaluator then joins trajectories and ground truth by scenario id.
 
 Scenario folders may also include `groundtruth_eval.json`, which carries
 scorer-specific metadata alongside the canonical answer in `groundtruth.txt`.
-Clarification-abstain-response (CAR) scenarios ship one, but the `static_json`
-scorer does not read it: the expected mode is the single key of
-`groundtruth.txt`, and the required terms are extracted from the value under
-that key.
+The `static_json` scorer does not read it. For clarification-abstain-response
+(CAR) scenarios the expected mode is the single key of `groundtruth.txt`, and
+the required terms are extracted from the value under that key.
 
 Example `groundtruth.txt`:
 
