@@ -1,3 +1,5 @@
+import pytest
+
 from evaluation.scorers.static_json import (
     evaluate_static_json,
     evaluate_static_json_batch,
@@ -5,6 +7,7 @@ from evaluation.scorers.static_json import (
     normalize_value,
     parse_structured_answer,
 )
+
 
 def test_parse_json_object_from_noisy_markdown_answer():
     raw = 'Answer:\n```json\n{"energy": 3, "material": 12}\n```'
@@ -328,7 +331,7 @@ def test_mode_clarification_fails_when_mode_key_is_wrong():
     assert score.extra_keys == ["answer.response"]
 
 
-def test_mode_abstain_reports_lately_dataset_date_time_terms():
+def test_mode_abstain_requires_lately_dataset_date_time_terms():
     score = evaluate_static_json(
         {
             "abstain": (
@@ -396,34 +399,52 @@ def test_mode_requires_exactly_one_top_level_key():
     assert score.extra_keys == ["answer.clarification", "answer.response"]
 
 
-def test_mode_passes_on_key_alone_when_terms_are_missing():
+def test_mode_fails_when_a_required_term_is_missing():
     score = evaluate_static_json(
         {"clarification": "Which asset do you mean by 'the main unit'?"},
         {"clarification": "Which asset should I analyze?"},
     )
 
-    assert score.strict_exact_match_accuracy == 1.0
-    assert score.f1 == 1.0
+    assert score.strict_exact_match_accuracy == 0.0
     assert score.mode_key_match == 1.0
-    assert score.mode_required_terms == ["main unit"]
     assert score.mode_matched_terms == []
     assert score.mode_term_coverage == 0.0
+    assert score.f1 == 0.5
 
 
-def test_mode_fails_on_wrong_key_even_when_terms_match():
+def test_mode_needs_every_required_term_to_pass():
+    score = evaluate_static_json(
+        {
+            "abstain": (
+                "Cannot determine what has been giving trouble 'lately' because "
+                "the dataset does not contain date or time information."
+            )
+        },
+        {"abstain": "Cannot determine this because the dataset has no date information."},
+    )
+
+    assert score.strict_exact_match_accuracy == 0.0
+    assert score.mode_key_match == 1.0
+    assert score.mode_matched_terms == ["cannot determine", "date", "dataset"]
+    assert score.mode_term_coverage == 0.6
+    assert score.f1 == pytest.approx(2 / 3)
+
+
+def test_mode_wrong_key_still_earns_partial_f1_for_terms():
     score = evaluate_static_json(
         {"clarification": "Which asset do you mean by 'the main unit'?"},
         {"response": "The main unit appears to be PMP42144."},
     )
 
     assert score.strict_exact_match_accuracy == 0.0
-    assert score.f1 == 0.0
     assert score.mode_key_match == 0.0
+    assert score.mode_term_coverage == 1.0
+    assert score.f1 == pytest.approx(0.4)
 
 
 def test_mode_key_is_case_insensitive():
     score = evaluate_static_json(
-        {"abstain": "Cannot determine because date or time is missing."},
+        {"abstain": "Not enough information."},
         '{"Abstain": "Not enough information."}',
     )
 
@@ -438,8 +459,9 @@ def test_mode_fails_when_answer_is_not_an_object():
     )
 
     assert score.strict_exact_match_accuracy == 0.0
-    assert score.mode_key_match == 0.0
+    assert score.f1 == 0.0
     assert score.mode_exactly_one_key == 0.0
+    assert score.extra_keys == ["answer"]
 
 
 def test_count_only_exact_match():
@@ -489,7 +511,7 @@ def test_static_json_scorer_wrapper_exact_match():
     assert result.details["strict_exact_match_accuracy"] == 1.0
 
 
-def test_static_json_scorer_scores_car_on_mode_key_only():
+def test_static_json_scorer_scores_car_on_mode_key_and_required_terms():
     scenario = Scenario.from_raw(
         {
             "id": "151",
@@ -500,13 +522,16 @@ def test_static_json_scorer_scores_car_on_mode_key_only():
     )
 
     scorer = StaticJsonScorer()
-    right_key = scorer(scenario, '{"clarification": "Which pump?"}', "")
+    full = scorer(scenario, '{"clarification": "Which asset is the main unit?"}', "")
+    term_missing = scorer(scenario, '{"clarification": "Which pump?"}', "")
     wrong_key = scorer(scenario, '{"response": "The main unit is PMP42144."}', "")
 
-    assert right_key.passed is True
-    assert right_key.score == 1.0
+    assert full.passed is True
+    assert full.score == 1.0
+    assert term_missing.passed is False
+    assert term_missing.score == 0.5
     assert wrong_key.passed is False
-    assert wrong_key.score == 0.0
+    assert wrong_key.score == 0.4
 
 
 def test_identifier_with_a_separator_is_not_read_as_a_count():
