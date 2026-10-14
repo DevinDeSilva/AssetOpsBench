@@ -107,3 +107,56 @@ def test_allowlisted_estimator_still_runs():
     r = _forecast({"estimator": {"sktime_class": "sktime.forecasting.naive.NaiveForecaster"},
                    "fh": [1, 2, 3]})
     assert r.get("status") == "success", r
+
+
+# File pointers: the read-back channel ------------------------------------------------------
+def test_file_pointer_outside_data_roots_is_refused():
+    for p in ("/proc/self/environ", "file:///etc/passwd", "/etc/hostname",
+              os.path.join(refs.WORKDIR, "..", "..", "etc", "passwd")):
+        r = _call("data_quality", {"dataset_path": p})
+        assert "error" in r, (p, r)
+        assert "COUCHDB" not in json.dumps(r)
+
+
+def test_url_pointer_is_refused():
+    for p in ("http://couchdb:5984/_all_dbs", "s3://bucket/x.csv"):
+        r = _call("data_quality", {"dataset_path": p})
+        assert "only local file pointers" in r.get("error", ""), r
+
+
+def test_valid_csv_outside_roots_and_symlink_to_it_are_refused(monkeypatch):
+    # a readable CSV outside the roots: the old code returned its contents
+    outside = tempfile.mkdtemp()
+    target = os.path.join(outside, "secret.csv")
+    with open(target, "w") as fh:
+        fh.write("timestamp,value\n2020-01-01,1\n2020-01-02,2\n")
+    monkeypatch.setenv("TSFM_DATA_ROOTS", refs._ensure_workdir())
+    link = os.path.join(refs.WORKDIR, f"link_{uuid.uuid4().hex}.csv")
+    os.symlink(target, link)
+    try:
+        for p in (target, link):
+            r = _call("data_quality", {"dataset_path": p})
+            assert "outside the allowed data directories" in r.get("error", ""), (p, r)
+    finally:
+        os.unlink(link)
+
+
+def test_file_pointer_inside_data_roots_still_works():
+    assert "error" not in _call("data_quality", {"dataset_path": _series()})
+
+
+def test_plan_step_id_cannot_write_outside_workdir():
+    assert refs._safe_name("../../etc/evil") == "_.._etc_evil"
+    out = refs.write_json({}, name="../../evil")
+    assert os.path.realpath(refs._path(out)).startswith(os.path.realpath(refs.WORKDIR))
+
+
+def test_agent_checkpoint_folder_is_allowed_and_repo_code_is_not():
+    # save_to "artifacts/output/..." is how agents persist a fine-tune; the code next to it is not
+    assert refs._path("artifacts/output/tuned_models/x").endswith("artifacts/output/tuned_models/x")
+    for p in ("artifacts/tsfm_models", "src/servers/tsfm/main.py", "artifacts/output/../../src"):
+        try:
+            refs._path(p)
+            raise AssertionError(f"{p} accepted")
+        except ValueError:
+            pass
