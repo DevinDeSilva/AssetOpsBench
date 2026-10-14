@@ -56,9 +56,11 @@ class StaticJsonScore:
     partial_numeric_match_accuracy: float
     range_match_accuracy: float
     delta_1_match_accuracy: float
-    precision: float
+    # None for a CAR answer scored on groundtruth_eval.json concepts, which
+    # is scored on recall alone.
+    precision: float | None
     recall: float
-    f1: float
+    f1: float | None
     total_gold_keys: int
     total_model_keys: int
     matched_keys: int
@@ -426,6 +428,9 @@ def similarity_score(gold_value: str, model_value: str) -> float:
 
 
 _MODE_KEYS = frozenset({"response", "clarification", "abstain"})
+# A CAR answer scored against groundtruth_eval.json concepts passes at this
+# recall.
+CAR_PASS_THRESHOLD = 0.5
 _IMPORTANT_MODE_TERMS = (
     "air conditioner",
     "cannot determine",
@@ -473,14 +478,25 @@ _STOPWORDS = frozenset(
 )
 
 
-def _normalize_text_for_terms(value: Any) -> str:
+def _joined_text(value: Any) -> str:
+    """Join the keys and scalars of a structure without JSON escapes.
+
+    json.dumps would turn a newline into ``\\n``, gluing the ``n`` onto the
+    next word.
+    """
     if value is None:
-        text = ""
-    elif isinstance(value, (dict, list, tuple)):
-        text = json.dumps(value, sort_keys=True)
-    else:
-        text = str(value).strip().lower()
-    text = re.sub(r"[^a-z0-9]+", " ", text)
+        return ""
+    if isinstance(value, dict):
+        return " ".join(
+            f"{key} {_joined_text(item)}" for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return " ".join(_joined_text(item) for item in value)
+    return str(value)
+
+
+def _normalize_text_for_terms(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", _joined_text(value).lower())
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -540,6 +556,53 @@ def _extract_required_mode_terms(value: Any) -> list[str]:
     return _dedupe_terms(terms)
 
 
+def _plural_form(form: str) -> str:
+    """Regular English plural of a form's last word: asset → assets."""
+    if form.endswith(("s", "x", "z", "ch", "sh")):
+        return f"{form}es"
+    if len(form) > 1 and form.endswith("y") and form[-2] not in "aeiou":
+        return f"{form[:-1]}ies"
+    return f"{form}s"
+
+
+def _contains_form(text: str, form: str, *, plural: bool) -> bool:
+    """Whether normalised ``text`` holds ``form``, or its plural, as whole words."""
+    padded = f" {text} "
+    return f" {form} " in padded or (plural and f" {_plural_form(form)} " in padded)
+
+
+def _metadata_concepts(
+    eval_metadata: dict[str, Any] | None,
+) -> list[tuple[str, list[str]]] | None:
+    """Read required concepts from a CAR scenario's groundtruth_eval.json.
+
+    Returns ``(concept, any_of forms)`` pairs, or None when the metadata has
+    no ``required_terms`` list. A bare string entry is a concept whose only
+    form is itself.
+    """
+    if not isinstance(eval_metadata, dict):
+        return None
+    required = eval_metadata.get("required_terms")
+    if not isinstance(required, list):
+        return None
+
+    concepts: list[tuple[str, list[str]]] = []
+    for entry in required:
+        if isinstance(entry, dict):
+            raw_forms = entry.get("any_of") or []
+            name = str(entry.get("concept") or (raw_forms[0] if raw_forms else ""))
+        else:
+            raw_forms = [entry]
+            name = str(entry)
+        forms = [
+            form
+            for form in (_normalize_text_for_terms(item) for item in raw_forms)
+            if form
+        ]
+        concepts.append((name, forms))
+    return concepts
+
+
 def _is_mode_gold_answer(value: Any) -> bool:
     parsed = parse_structured_answer(value)
     if not isinstance(parsed, dict) or len(parsed) != 1:
@@ -548,7 +611,22 @@ def _is_mode_gold_answer(value: Any) -> bool:
     return key in _MODE_KEYS
 
 
-def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
+def _evaluate_mode_json(
+    gold_answer: Any,
+    model_answer: Any,
+    eval_metadata: dict[str, Any] | None = None,
+) -> StaticJsonScore:
+    """Score a CAR answer: the mode key, then the terms under it.
+
+    With groundtruth_eval.json concepts the score is recall: 0 unless the
+    answer is a single-key object whose key is the gold mode, and otherwise
+    the fraction of required concepts covered, a concept being covered when
+    any one of its forms, or that form's plural, appears in the value.
+    Precision and f1 are None, since free text gives no count of the model's
+    claims to take precision over. Without concepts, terms are extracted
+    from the gold value and the score is the F1 over the mode key plus those
+    terms.
+    """
     gold = parse_structured_answer(gold_answer)
     model = parse_structured_answer(model_answer)
 
@@ -562,10 +640,25 @@ def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
     model_value = next(iter(model.values())) if model_is_dict and model_exactly_one_key else ""
 
     key_match = model_exactly_one_key and model_key == gold_key
-    required_terms = _extract_required_mode_terms(gold_value)
+    concepts = _metadata_concepts(eval_metadata)
+    gated = concepts is not None
+    if concepts is None:
+        concepts = [(term, [term]) for term in _extract_required_mode_terms(gold_value)]
+    required_terms = [name for name, _ in concepts]
     model_text = _normalize_text_for_terms(model_value)
+    matched_forms = [
+        next(
+            (
+                form
+                for form in forms
+                if _contains_form(model_text, form, plural=gated)
+            ),
+            None,
+        )
+        for _, forms in concepts
+    ]
     matched_terms = [
-        term for term in required_terms if f" {term} " in f" {model_text} "
+        name for (name, _), form in zip(concepts, matched_forms) if form
     ]
     term_coverage = (
         len(matched_terms) / len(required_terms) if required_terms else 1.0
@@ -583,13 +676,13 @@ def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
         )
     ]
 
-    for term in required_terms:
-        matched = term in matched_terms
+    for (term, forms), form in zip(concepts, matched_forms):
+        matched = form is not None
         details.append(
             KeyComparison(
                 key=f"answer.required_term.{term}",
-                gold_value=term,
-                model_value=term if matched else "MISSING",
+                gold_value=" | ".join(forms),
+                model_value=form or "MISSING",
                 exact=matched,
                 match_type="term_present" if matched else "term_missing",
                 similarity=1.0 if matched else 0.0,
@@ -612,13 +705,17 @@ def _evaluate_mode_json(gold_answer: Any, model_answer: Any) -> StaticJsonScore:
     total_model_keys = 1 + len(required_terms) + len(extra_keys)
     exact_matches = (1 if key_match else 0) + len(matched_terms)
 
-    precision = exact_matches / total_model_keys if total_model_keys else 0.0
-    recall = exact_matches / total_gold_keys if total_gold_keys else 0.0
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision + recall > 0
-        else 0.0
-    )
+    if gated:
+        precision = f1 = None
+        recall = term_coverage if key_match else 0.0
+    else:
+        precision = exact_matches / total_model_keys if total_model_keys else 0.0
+        recall = exact_matches / total_gold_keys if total_gold_keys else 0.0
+        f1 = (
+            2 * precision * recall / (precision + recall)
+            if precision + recall > 0
+            else 0.0
+        )
     strict_exact = 1.0 if key_match and term_coverage == 1.0 and not extra_keys else 0.0
 
     return StaticJsonScore(
@@ -838,10 +935,15 @@ def evaluate_static_json(
     model_answer: Any,
     *,
     similarity_threshold: float = 0.0,
+    eval_metadata: dict[str, Any] | None = None,
 ) -> StaticJsonScore:
-    """Evaluate one structured gold answer against one model answer."""
+    """Evaluate one structured gold answer against one model answer.
+
+    ``eval_metadata`` is the scenario's groundtruth_eval.json; only CAR
+    answers read it.
+    """
     if _is_mode_gold_answer(gold_answer):
-        return _evaluate_mode_json(gold_answer, model_answer)
+        return _evaluate_mode_json(gold_answer, model_answer, eval_metadata)
 
     if _is_choice_scalar(gold_answer):
         model_answer = _normalize_choice_answer(model_answer)
@@ -1067,18 +1169,31 @@ class StaticJsonScorer:
                 ),
             )
 
-        static_score = evaluate_static_json(gold_answer, answer)
-        passed = static_score.strict_exact_match_accuracy == 1.0
+        static_score = evaluate_static_json(
+            gold_answer, answer, eval_metadata=scenario.evaluation_metadata
+        )
+        if static_score.f1 is None:
+            # CAR scored on groundtruth_eval.json concepts: recall only.
+            score = static_score.recall
+            passed = score >= CAR_PASS_THRESHOLD
+            rationale = (
+                f"CAR recall {score:.3f} "
+                f"{'>=' if passed else '<'} {CAR_PASS_THRESHOLD}"
+            )
+        else:
+            score = static_score.f1
+            passed = static_score.strict_exact_match_accuracy == 1.0
+            rationale = (
+                "strict structured match"
+                if passed
+                else "structured answer differs from ground truth"
+            )
 
         return ScorerResult(
             scorer=self.name,
             passed=passed,
-            score=round(static_score.f1, 3),
-            rationale=(
-                "strict structured match"
-                if passed
-                else "structured answer differs from ground truth"
-            ),
+            score=round(score, 3),
+            rationale=rationale,
             details=static_score.to_dict(),
         )
 

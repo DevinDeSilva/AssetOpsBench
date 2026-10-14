@@ -100,17 +100,35 @@ The evaluator then joins trajectories and ground truth by scenario id.
 
 Scenario folders may also include `groundtruth_eval.json`, which carries
 scorer-specific metadata alongside the canonical answer in `groundtruth.txt`.
-The `static_json` scorer does not read it. For clarification-abstain-response
-(CAR) scenarios the expected mode is the single key of `groundtruth.txt`, and
-the required terms are extracted from the value under that key.
+The loader exposes it as `Scenario.evaluation_metadata`. `static_json` reads
+it only for clarification-abstain-response (CAR) scenarios, whose expected
+mode is the single key of `groundtruth.txt`.
 
-Example `groundtruth.txt`:
+Example CAR `groundtruth.txt`:
 
 ```json
 {
-  "clarification": "Which asset do you mean by 'the main unit'?"
+  "clarification": "Which asset and which time window do you mean?"
 }
 ```
+
+Example CAR `groundtruth_eval.json`:
+
+```json
+{
+  "mode": "clarification",
+  "required_terms": [
+    {"concept": "asset", "any_of": ["asset", "equipment"]},
+    {"concept": "time window", "any_of": ["time window", "date range"]}
+  ],
+  "optional_terms": []
+}
+```
+
+Each required concept lists the surface forms (`any_of`) that count as
+covering it. A bare string in `required_terms` is a concept with that one
+form. `mode` and `optional_terms` are not scored; the mode comes from
+`groundtruth.txt`.
 
 ---
 
@@ -220,7 +238,7 @@ object.
 | `extra_keys`                   | Keys present in model output but not in gold                                          |
 | `details`                      | Per-key comparison records                                                            |
 
-The scorer marks a scenario as passed only when the structured answer is a strict exact match. Partial correctness is still available through `score`, `f1`, `partial_exact_match_accuracy`, and detailed key-level results.
+The scorer marks a scenario as passed only when the structured answer is a strict exact match, and reports `f1` as `score`. Partial correctness is still available through `score`, `f1`, `partial_exact_match_accuracy`, and detailed key-level results. CAR scenarios with `groundtruth_eval.json` are the exception: see below.
 
 ### CAR metrics and pass criteria
 
@@ -232,20 +250,44 @@ exactly one of these top-level keys:
 response | clarification | abstain
 ```
 
+Matching is case-insensitive on normalised text and on word boundaries, so
+`asset` does not match inside `assetid`.
+
+#### With `groundtruth_eval.json`
+
+When the scenario's `groundtruth_eval.json` has `required_terms`, the score is
+`recall`, in [0, 1]:
+
+1. If the answer is not a JSON object with exactly one top-level key, or that
+   key is not the expected mode, recall is 0.
+2. Otherwise recall is the fraction of required concepts covered. A
+   concept is covered when any one of its `any_of` forms, or that form's
+   regular plural (`asset` → `assets`, `switch` → `switches`, `battery` →
+   `batteries`), appears in the value under the key. Irregular forms such as
+   `criteria` / `criterion` still need listing.
+
+The scenario passes when recall is at least 0.5 (`CAR_PASS_THRESHOLD`).
+`precision` and `f1` are `null`: precision needs a count of what the model
+asserted, and a free-text value gives none, so it could only repeat recall.
+For the example above (two concepts):
+
+| Model answer                                                  | Passed | Score (recall) |
+| ------------------------------------------------------------- | ------ | -------------- |
+| `{"clarification": "Which equipment, over what date range?"}` | yes    | 1.0            |
+| `{"clarification": "Which assets?"}`                          | yes    | 0.5            |
+| `{"clarification": "Can you say more?"}`                      | no     | 0.0            |
+| `{"abstain": "Which asset and time window?"}`                 | no     | 0.0            |
+
+#### Without `groundtruth_eval.json`
+
 The required terms are extracted from the gold value: quoted phrases, asset or
 fault identifiers (e.g. `PMP42144`), a leading `yes` / `no` stance, and a small
-allowlist of domain terms. Matching is case-insensitive on normalised text.
-
-A CAR scenario passes when:
-
-1. the model returns a JSON object with exactly one top-level key,
-2. that key matches the expected mode (case-insensitive), and
-3. every required term appears in the value under that key.
-
-The score is the F1 over the mode key plus each required term. Gold has
-`1 + len(required_terms)` entries; the model side has the same plus any extra
-top-level keys. For gold `{"clarification": "Which asset do you mean by 'the
-main unit'?"}` (one required term, `main unit`):
+allowlist of domain terms. The scenario passes when the answer has exactly one
+top-level key, that key is the expected mode, and every required term appears
+in the value under it. The score is the F1 over the mode key plus each required
+term. Gold has `1 + len(required_terms)` entries; the model side has the same
+plus any extra top-level keys. For gold `{"clarification": "Which asset do you
+mean by 'the main unit'?"}` (one required term, `main unit`):
 
 | Model answer                                         | Passed | Score |
 | ---------------------------------------------------- | ------ | ----- |
@@ -255,13 +297,13 @@ main unit'?"}` (one required term, `main unit`):
 
 Additional CAR report fields:
 
-| Metric                 | Meaning                                                    |
-| ---------------------- | ---------------------------------------------------------- |
-| `mode_key_match`       | 1.0 when the returned mode key matches the expected mode   |
-| `mode_exactly_one_key` | 1.0 when the answer has exactly one top-level key          |
-| `mode_required_terms`  | Required terms extracted from the gold answer value        |
-| `mode_matched_terms`   | Required terms found in the model answer value             |
-| `mode_term_coverage`   | Fraction of required terms found                           |
+| Metric                 | Meaning                                                              |
+| ---------------------- | -------------------------------------------------------------------- |
+| `mode_key_match`       | 1.0 when the returned mode key matches the expected mode             |
+| `mode_exactly_one_key` | 1.0 when the answer has exactly one top-level key                    |
+| `mode_required_terms`  | Required concepts from `groundtruth_eval.json`, or extracted terms   |
+| `mode_matched_terms`   | Required concepts or terms found in the model answer value           |
+| `mode_term_coverage`   | Fraction of required concepts or terms found, regardless of the key  |
 
 ---
 
@@ -421,13 +463,14 @@ The scorer itself only needs:
 ```text
 gold_answer
 model_answer
+eval_metadata   # groundtruth_eval.json, CAR only
 ```
 
 The evaluation pipeline is responsible for:
 
 ```text
 trajectory file → final answer + scenario_id/run_id
-scenario folder → groundtruth.txt
+scenario folder → groundtruth.txt (+ groundtruth_eval.json)
 join trajectory and scenario
 run scorer
 write report
