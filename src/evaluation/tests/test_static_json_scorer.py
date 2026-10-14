@@ -546,7 +546,7 @@ _CAR_METADATA = {
 }
 
 
-def test_car_concepts_give_zero_credit_on_a_wrong_key():
+def test_car_concepts_give_zero_recall_on_a_wrong_key():
     score = evaluate_static_json(
         _CAR_GOLD,
         {"abstain": "Which asset and which time window?"},
@@ -555,11 +555,10 @@ def test_car_concepts_give_zero_credit_on_a_wrong_key():
 
     assert score.mode_key_match == 0.0
     assert score.mode_term_coverage == 1.0
-    assert score.car_score == 0.0
-    assert score.f1 == 0.0
+    assert score.recall == 0.0
 
 
-def test_car_concepts_give_zero_credit_to_a_multi_key_answer():
+def test_car_concepts_give_zero_recall_to_a_multi_key_answer():
     score = evaluate_static_json(
         _CAR_GOLD,
         {"clarification": "Which asset, which time window?", "abstain": "n/a"},
@@ -567,10 +566,10 @@ def test_car_concepts_give_zero_credit_to_a_multi_key_answer():
     )
 
     assert score.mode_exactly_one_key == 0.0
-    assert score.car_score == 0.0
+    assert score.recall == 0.0
 
 
-def test_car_concepts_credit_is_the_covered_fraction():
+def test_car_concepts_recall_is_the_covered_fraction():
     half = evaluate_static_json(
         _CAR_GOLD,
         {"clarification": "Which equipment do you mean?"},
@@ -584,9 +583,10 @@ def test_car_concepts_credit_is_the_covered_fraction():
 
     assert half.mode_required_terms == ["asset", "time window"]
     assert half.mode_matched_terms == ["asset"]
-    assert half.car_score == 0.5
-    assert half.precision == half.recall == half.f1 == 0.5
-    assert none.car_score == 0.0
+    assert half.recall == 0.5
+    assert half.precision is None
+    assert half.f1 is None
+    assert none.recall == 0.0
 
 
 def test_car_concepts_match_any_form_on_word_boundaries():
@@ -601,10 +601,10 @@ def test_car_concepts_match_any_form_on_word_boundaries():
         eval_metadata=_CAR_METADATA,
     )
 
-    assert score.car_score == 1.0
+    assert score.recall == 1.0
     assert score.details[1].model_value == "equipment"
     assert score.details[2].model_value == "date range"
-    assert partial_word.car_score == 0.0
+    assert partial_word.recall == 0.0
 
 
 @pytest.mark.parametrize(
@@ -624,7 +624,7 @@ def test_car_concepts_match_the_plural_of_a_form(form, text):
         eval_metadata={"required_terms": [{"concept": form, "any_of": [form]}]},
     )
 
-    assert score.car_score == 1.0
+    assert score.recall == 1.0
     assert score.details[1].model_value == form
 
 
@@ -644,7 +644,7 @@ def test_car_concepts_read_a_structured_value_case_insensitively():
         eval_metadata=_CAR_METADATA,
     )
 
-    assert score.car_score == 1.0
+    assert score.recall == 1.0
 
 
 def test_car_concepts_read_a_structured_value_across_newlines():
@@ -654,7 +654,7 @@ def test_car_concepts_read_a_structured_value_across_newlines():
         eval_metadata=_CAR_METADATA,
     )
 
-    assert score.car_score == 1.0
+    assert score.recall == 1.0
 
 
 def test_car_concepts_accept_bare_string_terms():
@@ -665,7 +665,7 @@ def test_car_concepts_accept_bare_string_terms():
     )
 
     assert score.mode_required_terms == ["asset", "time window"]
-    assert score.car_score == 0.5
+    assert score.recall == 0.5
 
 
 def test_car_without_concepts_keeps_extracted_term_scoring():
@@ -675,12 +675,12 @@ def test_car_without_concepts_keeps_extracted_term_scoring():
         eval_metadata={"optional_terms": []},
     )
 
-    assert score.car_score is None
     assert score.mode_required_terms == ["main unit"]
+    assert score.precision == 0.5
     assert score.f1 == 0.5
 
 
-def test_static_json_scorer_passes_car_at_half_concept_credit():
+def test_static_json_scorer_passes_car_at_half_recall():
     scenario = Scenario.from_raw(
         {
             "id": "1",
@@ -698,7 +698,9 @@ def test_static_json_scorer_passes_car_at_half_concept_credit():
 
     assert half.passed is True
     assert half.score == 0.5
-    assert half.details["car_score"] == 0.5
+    assert half.details["recall"] == 0.5
+    assert half.details["f1"] is None
+    assert half.rationale == "CAR recall 0.500 >= 0.5"
     assert none.passed is False
     assert none.score == 0.0
     assert wrong_key.passed is False

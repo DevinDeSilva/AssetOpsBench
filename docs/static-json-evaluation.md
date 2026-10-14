@@ -238,7 +238,7 @@ object.
 | `extra_keys`                   | Keys present in model output but not in gold                                          |
 | `details`                      | Per-key comparison records                                                            |
 
-The scorer marks a scenario as passed only when the structured answer is a strict exact match. Partial correctness is still available through `score`, `f1`, `partial_exact_match_accuracy`, and detailed key-level results.
+The scorer marks a scenario as passed only when the structured answer is a strict exact match, and reports `f1` as `score`. Partial correctness is still available through `score`, `f1`, `partial_exact_match_accuracy`, and detailed key-level results. CAR scenarios with `groundtruth_eval.json` are the exception: see below.
 
 ### CAR metrics and pass criteria
 
@@ -256,27 +256,27 @@ Matching is case-insensitive on normalised text and on word boundaries, so
 #### With `groundtruth_eval.json`
 
 When the scenario's `groundtruth_eval.json` has `required_terms`, the score is
-a credit in [0, 1]:
+`recall`, in [0, 1]:
 
 1. If the answer is not a JSON object with exactly one top-level key, or that
-   key is not the expected mode, the credit is 0.
-2. Otherwise the credit is the fraction of required concepts covered. A
+   key is not the expected mode, recall is 0.
+2. Otherwise recall is the fraction of required concepts covered. A
    concept is covered when any one of its `any_of` forms, or that form's
    regular plural (`asset` → `assets`, `switch` → `switches`, `battery` →
    `batteries`), appears in the value under the key. Irregular forms such as
    `criteria` / `criterion` still need listing.
 
-`precision`, `recall`, `f1` and `car_score` all report this credit: with one
-matching key the model side holds exactly the gold entries, so precision
-equals recall. The scenario passes when the credit is at least 0.5
-(`CAR_PASS_THRESHOLD`). For the example above (two concepts):
+The scenario passes when recall is at least 0.5 (`CAR_PASS_THRESHOLD`).
+`precision` and `f1` are `null`: precision needs a count of what the model
+asserted, and a free-text value gives none, so it could only repeat recall.
+For the example above (two concepts):
 
-| Model answer                                                  | Passed | Score |
-| ------------------------------------------------------------- | ------ | ----- |
-| `{"clarification": "Which equipment, over what date range?"}` | yes    | 1.0   |
-| `{"clarification": "Which asset?"}`                           | yes    | 0.5   |
-| `{"clarification": "Can you say more?"}`                      | no     | 0.0   |
-| `{"abstain": "Which asset and time window?"}`                 | no     | 0.0   |
+| Model answer                                                  | Passed | Score (recall) |
+| ------------------------------------------------------------- | ------ | -------------- |
+| `{"clarification": "Which equipment, over what date range?"}` | yes    | 1.0            |
+| `{"clarification": "Which assets?"}`                          | yes    | 0.5            |
+| `{"clarification": "Can you say more?"}`                      | no     | 0.0            |
+| `{"abstain": "Which asset and time window?"}`                 | no     | 0.0            |
 
 #### Without `groundtruth_eval.json`
 
@@ -304,7 +304,6 @@ Additional CAR report fields:
 | `mode_required_terms`  | Required concepts from `groundtruth_eval.json`, or extracted terms   |
 | `mode_matched_terms`   | Required concepts or terms found in the model answer value           |
 | `mode_term_coverage`   | Fraction of required concepts or terms found, regardless of the key  |
-| `car_score`            | The gated credit; set only when `groundtruth_eval.json` is used      |
 
 ---
 

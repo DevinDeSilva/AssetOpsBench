@@ -56,9 +56,11 @@ class StaticJsonScore:
     partial_numeric_match_accuracy: float
     range_match_accuracy: float
     delta_1_match_accuracy: float
-    precision: float
+    # None for a CAR answer scored on groundtruth_eval.json concepts, which
+    # is scored on recall alone.
+    precision: float | None
     recall: float
-    f1: float
+    f1: float | None
     total_gold_keys: int
     total_model_keys: int
     matched_keys: int
@@ -78,7 +80,6 @@ class StaticJsonScore:
     mode_required_terms: list[str] = field(default_factory=list)
     mode_matched_terms: list[str] = field(default_factory=list)
     mode_term_coverage: float | None = None
-    car_score: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dictionary."""
@@ -428,7 +429,7 @@ def similarity_score(gold_value: str, model_value: str) -> float:
 
 _MODE_KEYS = frozenset({"response", "clarification", "abstain"})
 # A CAR answer scored against groundtruth_eval.json concepts passes at this
-# credit.
+# recall.
 CAR_PASS_THRESHOLD = 0.5
 _IMPORTANT_MODE_TERMS = (
     "air conditioner",
@@ -617,14 +618,14 @@ def _evaluate_mode_json(
 ) -> StaticJsonScore:
     """Score a CAR answer: the mode key, then the terms under it.
 
-    With groundtruth_eval.json concepts the answer earns nothing unless it is
-    a single-key object whose key is the gold mode; its credit is then the
-    fraction of required concepts covered, a concept being covered when any
-    one of its forms, or that form's plural, appears in the value. Precision,
-    recall and f1 all
-    equal that credit, since a single matching key leaves the model side with
-    exactly the gold entries. Without concepts, terms are extracted from the
-    gold value and the score is the F1 over the mode key plus those terms.
+    With groundtruth_eval.json concepts the score is recall: 0 unless the
+    answer is a single-key object whose key is the gold mode, and otherwise
+    the fraction of required concepts covered, a concept being covered when
+    any one of its forms, or that form's plural, appears in the value.
+    Precision and f1 are None, since free text gives no count of the model's
+    claims to take precision over. Without concepts, terms are extracted
+    from the gold value and the score is the F1 over the mode key plus those
+    terms.
     """
     gold = parse_structured_answer(gold_answer)
     model = parse_structured_answer(model_answer)
@@ -705,7 +706,8 @@ def _evaluate_mode_json(
     exact_matches = (1 if key_match else 0) + len(matched_terms)
 
     if gated:
-        precision = recall = f1 = term_coverage if key_match else 0.0
+        precision = f1 = None
+        recall = term_coverage if key_match else 0.0
     else:
         precision = exact_matches / total_model_keys if total_model_keys else 0.0
         recall = exact_matches / total_gold_keys if total_gold_keys else 0.0
@@ -747,7 +749,6 @@ def _evaluate_mode_json(
         mode_required_terms=required_terms,
         mode_matched_terms=matched_terms,
         mode_term_coverage=term_coverage,
-        car_score=f1 if gated else None,
     )
 
 
@@ -1171,13 +1172,16 @@ class StaticJsonScorer:
         static_score = evaluate_static_json(
             gold_answer, answer, eval_metadata=scenario.evaluation_metadata
         )
-        if static_score.car_score is not None:
-            passed = static_score.car_score >= CAR_PASS_THRESHOLD
+        if static_score.f1 is None:
+            # CAR scored on groundtruth_eval.json concepts: recall only.
+            score = static_score.recall
+            passed = score >= CAR_PASS_THRESHOLD
             rationale = (
-                f"CAR credit {static_score.car_score:.3f} "
+                f"CAR recall {score:.3f} "
                 f"{'>=' if passed else '<'} {CAR_PASS_THRESHOLD}"
             )
         else:
+            score = static_score.f1
             passed = static_score.strict_exact_match_accuracy == 1.0
             rationale = (
                 "strict structured match"
@@ -1188,7 +1192,7 @@ class StaticJsonScorer:
         return ScorerResult(
             scorer=self.name,
             passed=passed,
-            score=round(static_score.f1, 3),
+            score=round(score, 3),
             rationale=rationale,
             details=static_score.to_dict(),
         )
