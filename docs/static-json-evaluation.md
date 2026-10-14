@@ -261,8 +261,10 @@ a credit in [0, 1]:
 1. If the answer is not a JSON object with exactly one top-level key, or that
    key is not the expected mode, the credit is 0.
 2. Otherwise the credit is the fraction of required concepts covered. A
-   concept is covered when any one of its `any_of` forms appears in the value
-   under the key.
+   concept is covered when any one of its `any_of` forms, or that form's
+   regular plural (`asset` → `assets`, `switch` → `switches`, `battery` →
+   `batteries`), appears in the value under the key. Irregular forms such as
+   `criteria` / `criterion` still need listing.
 
 `precision`, `recall`, `f1` and `car_score` all report this credit: with one
 matching key the model side holds exactly the gold entries, so precision

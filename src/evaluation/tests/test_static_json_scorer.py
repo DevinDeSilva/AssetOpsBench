@@ -607,6 +607,36 @@ def test_car_concepts_match_any_form_on_word_boundaries():
     assert partial_word.car_score == 0.0
 
 
+@pytest.mark.parametrize(
+    ("form", "text"),
+    [
+        ("asset", "Which assets?"),
+        ("time window", "Which time windows?"),
+        ("switch", "Which switches?"),
+        ("battery", "Which batteries?"),
+        ("relay", "Which relays?"),
+    ],
+)
+def test_car_concepts_match_the_plural_of_a_form(form, text):
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": text},
+        eval_metadata={"required_terms": [{"concept": form, "any_of": [form]}]},
+    )
+
+    assert score.car_score == 1.0
+    assert score.details[1].model_value == form
+
+
+def test_car_extracted_terms_do_not_match_plurals():
+    score = evaluate_static_json(
+        {"clarification": "Which asset do you mean by 'the main unit'?"},
+        {"clarification": "Which of the main units?"},
+    )
+
+    assert score.mode_matched_terms == []
+
+
 def test_car_concepts_read_a_structured_value_case_insensitively():
     score = evaluate_static_json(
         _CAR_GOLD,

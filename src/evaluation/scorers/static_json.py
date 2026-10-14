@@ -555,6 +555,21 @@ def _extract_required_mode_terms(value: Any) -> list[str]:
     return _dedupe_terms(terms)
 
 
+def _plural_form(form: str) -> str:
+    """Regular English plural of a form's last word: asset → assets."""
+    if form.endswith(("s", "x", "z", "ch", "sh")):
+        return f"{form}es"
+    if len(form) > 1 and form.endswith("y") and form[-2] not in "aeiou":
+        return f"{form[:-1]}ies"
+    return f"{form}s"
+
+
+def _contains_form(text: str, form: str, *, plural: bool) -> bool:
+    """Whether normalised ``text`` holds ``form``, or its plural, as whole words."""
+    padded = f" {text} "
+    return f" {form} " in padded or (plural and f" {_plural_form(form)} " in padded)
+
+
 def _metadata_concepts(
     eval_metadata: dict[str, Any] | None,
 ) -> list[tuple[str, list[str]]] | None:
@@ -605,7 +620,8 @@ def _evaluate_mode_json(
     With groundtruth_eval.json concepts the answer earns nothing unless it is
     a single-key object whose key is the gold mode; its credit is then the
     fraction of required concepts covered, a concept being covered when any
-    one of its forms appears in the value. Precision, recall and f1 all
+    one of its forms, or that form's plural, appears in the value. Precision,
+    recall and f1 all
     equal that credit, since a single matching key leaves the model side with
     exactly the gold entries. Without concepts, terms are extracted from the
     gold value and the score is the F1 over the mode key plus those terms.
@@ -630,7 +646,14 @@ def _evaluate_mode_json(
     required_terms = [name for name, _ in concepts]
     model_text = _normalize_text_for_terms(model_value)
     matched_forms = [
-        next((form for form in forms if f" {form} " in f" {model_text} "), None)
+        next(
+            (
+                form
+                for form in forms
+                if _contains_form(model_text, form, plural=gated)
+            ),
+            None,
+        )
         for _, forms in concepts
     ]
     matched_terms = [
