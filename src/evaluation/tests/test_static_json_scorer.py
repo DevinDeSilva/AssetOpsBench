@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from evaluation.scorers.static_json import (
@@ -532,6 +534,145 @@ def test_static_json_scorer_scores_car_on_mode_key_and_required_terms():
     assert term_missing.score == 0.5
     assert wrong_key.passed is False
     assert wrong_key.score == 0.4
+
+
+_CAR_GOLD = {"clarification": "Which asset and which time window do you mean?"}
+_CAR_METADATA = {
+    "mode": "clarification",
+    "required_terms": [
+        {"concept": "asset", "any_of": ["asset", "equipment"]},
+        {"concept": "time window", "any_of": ["time window", "date range"]},
+    ],
+}
+
+
+def test_car_concepts_give_zero_credit_on_a_wrong_key():
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"abstain": "Which asset and which time window?"},
+        eval_metadata=_CAR_METADATA,
+    )
+
+    assert score.mode_key_match == 0.0
+    assert score.mode_term_coverage == 1.0
+    assert score.car_score == 0.0
+    assert score.f1 == 0.0
+
+
+def test_car_concepts_give_zero_credit_to_a_multi_key_answer():
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": "Which asset, which time window?", "abstain": "n/a"},
+        eval_metadata=_CAR_METADATA,
+    )
+
+    assert score.mode_exactly_one_key == 0.0
+    assert score.car_score == 0.0
+
+
+def test_car_concepts_credit_is_the_covered_fraction():
+    half = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": "Which equipment do you mean?"},
+        eval_metadata=_CAR_METADATA,
+    )
+    none = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": "Can you say more?"},
+        eval_metadata=_CAR_METADATA,
+    )
+
+    assert half.mode_required_terms == ["asset", "time window"]
+    assert half.mode_matched_terms == ["asset"]
+    assert half.car_score == 0.5
+    assert half.precision == half.recall == half.f1 == 0.5
+    assert none.car_score == 0.0
+
+
+def test_car_concepts_match_any_form_on_word_boundaries():
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": "Which equipment, and over what date range?"},
+        eval_metadata=_CAR_METADATA,
+    )
+    partial_word = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": "Which assetid?"},
+        eval_metadata=_CAR_METADATA,
+    )
+
+    assert score.car_score == 1.0
+    assert score.details[1].model_value == "equipment"
+    assert score.details[2].model_value == "date range"
+    assert partial_word.car_score == 0.0
+
+
+def test_car_concepts_read_a_structured_value_case_insensitively():
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": {"question": "Which Asset, over which Time Window?"}},
+        eval_metadata=_CAR_METADATA,
+    )
+
+    assert score.car_score == 1.0
+
+
+def test_car_concepts_read_a_structured_value_across_newlines():
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": {"questions": ["Which asset?\ntime window?"]}},
+        eval_metadata=_CAR_METADATA,
+    )
+
+    assert score.car_score == 1.0
+
+
+def test_car_concepts_accept_bare_string_terms():
+    score = evaluate_static_json(
+        _CAR_GOLD,
+        {"clarification": "Which asset?"},
+        eval_metadata={"required_terms": ["asset", "time window"]},
+    )
+
+    assert score.mode_required_terms == ["asset", "time window"]
+    assert score.car_score == 0.5
+
+
+def test_car_without_concepts_keeps_extracted_term_scoring():
+    score = evaluate_static_json(
+        {"clarification": "Which asset do you mean by 'the main unit'?"},
+        {"clarification": "Which pump?"},
+        eval_metadata={"optional_terms": []},
+    )
+
+    assert score.car_score is None
+    assert score.mode_required_terms == ["main unit"]
+    assert score.f1 == 0.5
+
+
+def test_static_json_scorer_passes_car_at_half_concept_credit():
+    scenario = Scenario.from_raw(
+        {
+            "id": "1",
+            "text": "Synthetic CAR scenario.",
+            "expected_answer": json.dumps(_CAR_GOLD),
+            "evaluation_metadata": _CAR_METADATA,
+            "scoring_method": "static_json",
+        }
+    )
+
+    scorer = StaticJsonScorer()
+    half = scorer(scenario, '{"clarification": "Which asset?"}', "")
+    none = scorer(scenario, '{"clarification": "Can you say more?"}', "")
+    wrong_key = scorer(scenario, '{"abstain": "Which asset and time window?"}', "")
+
+    assert half.passed is True
+    assert half.score == 0.5
+    assert half.details["car_score"] == 0.5
+    assert none.passed is False
+    assert none.score == 0.0
+    assert wrong_key.passed is False
+    assert wrong_key.score == 0.0
 
 
 def test_identifier_with_a_separator_is_not_read_as_a_count():
