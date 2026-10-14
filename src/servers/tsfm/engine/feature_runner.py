@@ -8,7 +8,7 @@ entry points, no in-place mutation, schema consistency, and invertible round tri
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Optional
 
 
 class FeatureValidationError(Exception):
@@ -16,24 +16,8 @@ class FeatureValidationError(Exception):
 
 
 def load_program(code: str, class_name: str = "Transformation"):
-    """Exec a stored program string and return its Transformation class.
-
-    NOTE: executes code. In the benchmark/agent setting run this in a sandbox
-    (restricted globals, subprocess, or container). Here we exec in a fresh namespace
-    with a minimal import surface, matching how EFE executes candidate programs.
-    """
-    ns: Dict[str, Any] = {}
-    try:
-        exec(code, ns)  # noqa: S102 - intentional; sandbox in production
-    except Exception as e:
-        raise FeatureValidationError(f"program failed to import: {e}")
-    cls = ns.get(class_name)
-    if cls is None:
-        raise FeatureValidationError(f"no class '{class_name}' defined")
-    for m in ("fit", "transform"):
-        if not callable(getattr(cls, m, None)):
-            raise FeatureValidationError(f"missing required method '{m}'")
-    return cls
+    """Disabled: the server never executes feature-card source (it used to exec() it)."""
+    raise FeatureValidationError("executing feature-card code is disabled in the TSFM server")
 
 
 def _no_inplace(before, after) -> bool:

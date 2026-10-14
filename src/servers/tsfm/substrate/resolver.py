@@ -26,8 +26,54 @@ TASK_TO_SCITYPE = {
 _TARGET_KEY = "_target_"
 
 
+# Only these classes may be imported from a dotted path. Paths reach this function from agent
+# input (inline sktime_class, nested _target_, catalog cards the agent can rewrite), so an
+# open import ran any callable, e.g. subprocess.Popen. Operators extend the list with
+# TSFM_EXTRA_ESTIMATOR_CLASSES (comma-separated exact paths).
+ALLOWED_CLASSES = frozenset({
+    "sktime.forecasting.ttm.TinyTimeMixerForecaster",
+    "sktime.forecasting.chronos.ChronosForecaster",
+    "sktime.forecasting.timesfm.TimesFMForecaster",
+    "sktime.forecasting.timesfm2.TimesFM2Forecaster",
+    "sktime.forecasting.moirai.MOIRAIForecaster",
+    "sktime.forecasting.moirai2.Moirai2Forecaster",
+    "sktime.forecasting.toto2.Toto2Forecaster",
+    "sktime.forecasting.kronos.KronosForecaster",
+    "sktime.forecasting.momentfm.MomentFMForecaster",
+    "sktime.forecasting.timemoe.TimeMoEForecaster",
+    "sktime.forecasting.patch_tst.PatchTSTForecaster",
+    "sktime.forecasting.patch_tsmixer.PatchTSMixerForecaster",
+    "sktime.forecasting.naive.NaiveForecaster",
+    "sktime.forecasting.theta.ThetaForecaster",
+    "sktime.forecasting.arima.ARIMA",
+    "sktime.forecasting.arima.AutoARIMA",
+    "sktime.forecasting.conformal.ConformalIntervals",
+    "sktime.detection.tspulse.TSPulseAnomalyDetector",
+    "sktime.detection.hampel.HampelDetector",
+    "sktime.detection.lof.SubLOF",
+    "sktime.detection.adapters._pyod.PyODDetector",
+    "sktime.detection.dummy._zero_an.ZeroAnomalies",
+    "pyod.models.iforest.IForest",
+    "sktime.classification.foundation_models.tspulse.TSPulseClassifier",
+    "sklearn.ensemble.RandomForestClassifier",
+    "sktime.clustering.k_means.TimeSeriesKMeans",
+    "sktime.clustering.k_medoids.TimeSeriesKMedoids",
+    "sktime.clustering.dbscan.TimeSeriesDBSCAN",
+    "sktime.clustering.kernel_k_means.TimeSeriesKernelKMeans",
+    "sktime.clustering.agglomerative.TimeSeriesAgglomerativeClustering",
+})
+
+
 def _import_target(path: str):
-    """Import a dotted path 'pkg.module.Name' -> the class/callable Name."""
+    """Import an allowlisted dotted path 'pkg.module.Name' -> the class Name.
+
+    The check runs before the import, so a refused path never loads its module.
+    """
+    import os
+
+    extra = {p.strip() for p in os.environ.get("TSFM_EXTRA_ESTIMATOR_CLASSES", "").split(",")}
+    if path not in ALLOWED_CLASSES and path not in extra - {""}:
+        raise ValueError(f"'{path}' is not an allowed estimator class; use a catalog model_id")
     module, name = path.rsplit(".", 1)
     return getattr(importlib.import_module(module), name)
 

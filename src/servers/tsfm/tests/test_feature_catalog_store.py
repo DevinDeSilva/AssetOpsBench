@@ -53,10 +53,10 @@ def test_feature_store_reads_collection_name_from_env(monkeypatch):
     assert feature_store.get_feature(store, doc["feature_id"])["feature_id"] == doc[
         "feature_id"
     ]
-    assert feature_store.find_features(store, kind="transform")
+    assert feature_store.find_features(store, kind="extractor")
 
 
-def test_register_feature_rejects_in_place_transform():
+def test_register_feature_never_executes_code():
     store = MemoryStore()
     bad = {
         "feature_id": "bad_inplace",
@@ -71,5 +71,5 @@ def test_register_feature_rejects_in_place_transform():
         ),
     }
 
-    with pytest.raises(Exception, match="mutated"):
+    with pytest.raises(Exception, match="disabled"):
         feature_store.register_feature(store, bad)

@@ -14,15 +14,15 @@ build time; the scorer grades the rest.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 from typing import Dict, Optional
 
 
 def introspect(sktime_class: str) -> dict:
     """Constructor params (name → default/required/type) + sktime example param sets."""
-    module, cls = sktime_class.rsplit(".", 1)
-    Est = getattr(importlib.import_module(module), cls)
+    from ..substrate.resolver import _import_target
+
+    Est = _import_target(sktime_class)
     sig = inspect.signature(Est.__init__)
     _empty = inspect.Parameter.empty
     params: Dict[str, dict] = {}
