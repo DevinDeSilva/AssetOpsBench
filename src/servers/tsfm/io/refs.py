@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import tempfile
 import uuid
 from typing import List, Optional
 
@@ -20,8 +22,36 @@ import pandas as pd
 WORKDIR = os.environ.get("TSFM_WORKDIR", "/tmp/tsfm_work")
 
 
+def _data_roots() -> List[str]:
+    """Directories a file pointer may resolve into: this server's WORKDIR, the system temp dir
+    and /tmp (code_exec workspaces, other servers' outputs), the Harbor shared workspace, and
+    artifacts/output (where agents save fine-tuned checkpoints via recipe save_to).
+    TSFM_DATA_ROOTS (os.pathsep-separated) replaces the default."""
+    env = os.environ.get("TSFM_DATA_ROOTS")
+    roots = env.split(os.pathsep) if env else [
+        WORKDIR, tempfile.gettempdir(), "/tmp", "/workspace-share",
+        os.path.join(os.getcwd(), "artifacts", "output")]  # where agents save checkpoints
+    return [os.path.realpath(r) for r in roots if r]
+
+
 def _path(ref: str) -> str:
-    return ref[7:] if ref.startswith("file://") else ref
+    """Resolve a file pointer, confined to the data roots.
+
+    Unconfined, every dataset_path read any file the server could open, e.g.
+    /proc/self/environ (the CouchDB password). realpath() follows symlinks, so a link
+    planted in a workspace cannot escape; URLs (http://, s3://) are refused.
+    """
+    if "://" in ref and not ref.startswith("file://"):
+        raise ValueError("only local file pointers are supported")
+    p = os.path.realpath(ref[7:] if ref.startswith("file://") else ref)
+    if not any(p == r or p.startswith(r + os.sep) for r in _data_roots()):
+        raise ValueError(f"file pointer is outside the allowed data directories: {ref}")
+    return p
+
+
+def _safe_name(name) -> str:
+    """Output file stem; plan step ids are agent-supplied, so strip path characters."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(name)).lstrip(".") or "result"
 
 
 def _ensure_workdir():
@@ -91,7 +121,7 @@ def load_series(
 def write_series(obj, *, name: str = "result") -> str:
     """Write a forecast/series/frame to a file pointer and return the ref."""
     _ensure_workdir()
-    p = os.path.join(WORKDIR, f"{name}_{uuid.uuid4().hex[:8]}.csv")
+    p = os.path.join(WORKDIR, f"{_safe_name(name)}_{uuid.uuid4().hex[:8]}.csv")
     (obj.to_frame() if isinstance(obj, pd.Series) else pd.DataFrame(obj)).to_csv(
         p, index=False
     )
@@ -100,7 +130,7 @@ def write_series(obj, *, name: str = "result") -> str:
 
 def write_json(obj: dict, *, name: str = "result") -> str:
     _ensure_workdir()
-    p = os.path.join(WORKDIR, f"{name}_{uuid.uuid4().hex[:8]}.json")
+    p = os.path.join(WORKDIR, f"{_safe_name(name)}_{uuid.uuid4().hex[:8]}.json")
     json.dump(obj, open(p, "w"), indent=2, default=str)
     return f"file://{p}"
 
@@ -124,6 +154,6 @@ def materialize_iot(
         df.insert(
             0, "timestamp", pd.date_range("2020-01-01", periods=len(arr), freq=freq)
         )
-    p = os.path.join(WORKDIR, f"iot_{asset_id}.csv")
+    p = os.path.join(WORKDIR, f"iot_{_safe_name(asset_id)}.csv")
     df.to_csv(p, index=False)
     return f"file://{p}"

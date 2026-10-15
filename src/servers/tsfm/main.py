@@ -15,6 +15,11 @@ from __future__ import annotations
 import logging
 import sys
 import os
+
+# Load weights only from the preloaded HF cache, never a repo the agent names: MOIRAIForecaster
+# unpickles model.ckpt (weights_only=False) from any non-Salesforce repo. Set before any
+# huggingface_hub import; override with HF_HUB_OFFLINE=0 for local development.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 from typing import List, Optional, Union
 
 import pandas as pd
@@ -1329,7 +1334,6 @@ def get_feature(feature_id: str) -> Union[CardResult, ErrorResult]:
         return ErrorResult(error=str(exc))
 
 
-@mcp.tool(title="Register Feature")
 def register_feature(
     feature: dict,
     overwrite: bool = False,
@@ -1426,7 +1430,6 @@ def deprecate_feature(
         return ErrorResult(error=str(exc))
 
 
-@mcp.tool(title="New Feature Version")
 def new_feature_version(
     feature_id: str,
     fields: Optional[dict] = None,

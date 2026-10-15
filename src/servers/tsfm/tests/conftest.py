@@ -11,6 +11,9 @@ import os
 import pytest
 
 os.environ["TSFM_STORE"] = "memory"
+os.environ.setdefault(
+    "TSFM_EXTRA_ESTIMATOR_CLASSES", "servers.tsfm.tests.fake_hf_forecaster.FakeTTMForecaster"
+)
 
 _SEEDS = os.environ.get("TSFM_SEEDS_DIR") or os.path.normpath(
     os.path.join(

@@ -1,0 +1,216 @@
+"""The TSFM server must never run agent-supplied code.
+
+Each test sends the payload from the reported run (subprocess.Popen through a JSON spec) down
+one route and checks both that the call errors and that the canary file was never written.
+"""
+
+import asyncio
+import json
+import os
+import sys
+import tempfile
+import time
+import uuid
+
+import numpy as np
+
+from ..io import refs
+from ..main import mcp
+
+
+def _call(name, args):
+    content, _ = asyncio.run(mcp.call_tool(name, args))
+    out = json.loads(content[0].text)
+    return out.get("result", out) if isinstance(out, dict) else out
+
+
+def _popen():
+    canary = os.path.join(tempfile.gettempdir(), f"tsfm_canary_{uuid.uuid4().hex}")
+    spec = {"_target_": "subprocess.Popen",
+            "params": {"args": [sys.executable, "-c", f"open({canary!r}, 'w')"]}}
+    return canary, spec
+
+
+def _assert_blocked(result, canary):
+    time.sleep(0.5)  # Popen is asynchronous
+    assert "error" in json.dumps(result), result
+    assert not os.path.exists(canary), "agent-supplied code executed"
+
+
+def _series():
+    return refs.materialize_iot(np.sin(np.arange(120) / 6.0), asset_id="noexec")
+
+
+def _forecast(recipe):
+    return _call("run_recipe", {"dataset_path": _series(), "timestamp_column": "timestamp",
+                                "target_columns": ["value"], "recipe": recipe})
+
+
+def test_inline_class_is_refused():
+    canary, spec = _popen()
+    _assert_blocked(_forecast({"estimator": {"sktime_class": spec["_target_"],
+                                             "params": spec["params"]}}), canary)
+
+
+def test_nested_target_is_refused():
+    canary, spec = _popen()
+    _assert_blocked(_forecast({"estimator": {
+        "sktime_class": "sktime.forecasting.naive.NaiveForecaster",
+        "params": {"strategy": spec}}}), canary)
+
+
+def test_finetune_block_is_refused():
+    canary, spec = _popen()
+    _assert_blocked(_forecast({"estimator": {"model_id": "ttm_512_96"},
+                               "finetune": {"x": spec}}), canary)
+
+
+def test_run_plan_step_is_refused():
+    canary, spec = _popen()
+    _assert_blocked(_call("run_plan", {"plan_spec": {"steps": [{
+        "id": "a", "task": "anomaly", "args": {"data_ref": _series()},
+        "recipe": {"estimator": {"sktime_class": spec["_target_"],
+                                 "params": spec["params"]}}}]}}), canary)
+
+
+def test_rewritten_catalog_card_is_refused():
+    canary, spec = _popen()
+    _call("update_model", {"model_id": "ttm_512_96",
+                           "fields": {"sktime_class": spec["_target_"],
+                                      "params": spec["params"]}})
+    try:
+        _assert_blocked(_forecast({"estimator": {"model_id": "ttm_512_96"}}), canary)
+    finally:
+        from .conftest import _seed_into
+        from .. import main
+        _seed_into(main._STORE)  # restore the seeded card for later tests
+
+
+def test_feature_code_is_never_executed():
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert "register_feature" not in names and "new_feature_version" not in names
+    from ..engine.feature_runner import FeatureValidationError, load_program
+
+    canary = os.path.join(tempfile.gettempdir(), f"tsfm_canary_{uuid.uuid4().hex}")
+    try:
+        load_program(f"open({canary!r}, 'w')")
+    except FeatureValidationError:
+        pass
+    assert not os.path.exists(canary)
+
+
+def test_hub_downloads_default_to_offline():
+    assert os.environ.get("HF_HUB_OFFLINE") == "1"
+
+
+def test_allowlisted_estimator_still_runs():
+    r = _forecast({"estimator": {"sktime_class": "sktime.forecasting.naive.NaiveForecaster"},
+                   "fh": [1, 2, 3]})
+    assert r.get("status") == "success", r
+
+
+# File pointers: the read-back channel ------------------------------------------------------
+def test_file_pointer_outside_data_roots_is_refused():
+    for p in ("/proc/self/environ", "file:///etc/passwd", "/etc/hostname",
+              os.path.join(refs.WORKDIR, "..", "..", "etc", "passwd")):
+        r = _call("data_quality", {"dataset_path": p})
+        assert "error" in r, (p, r)
+        assert "COUCHDB" not in json.dumps(r)
+
+
+def test_url_pointer_is_refused():
+    for p in ("http://couchdb:5984/_all_dbs", "s3://bucket/x.csv"):
+        r = _call("data_quality", {"dataset_path": p})
+        assert "only local file pointers" in r.get("error", ""), r
+
+
+def test_valid_csv_outside_roots_and_symlink_to_it_are_refused(monkeypatch):
+    # a readable CSV outside the roots: the old code returned its contents
+    outside = tempfile.mkdtemp()
+    target = os.path.join(outside, "secret.csv")
+    with open(target, "w") as fh:
+        fh.write("timestamp,value\n2020-01-01,1\n2020-01-02,2\n")
+    monkeypatch.setenv("TSFM_DATA_ROOTS", refs._ensure_workdir())
+    link = os.path.join(refs.WORKDIR, f"link_{uuid.uuid4().hex}.csv")
+    os.symlink(target, link)
+    try:
+        for p in (target, link):
+            r = _call("data_quality", {"dataset_path": p})
+            assert "outside the allowed data directories" in r.get("error", ""), (p, r)
+    finally:
+        os.unlink(link)
+
+
+def test_file_pointer_inside_data_roots_still_works():
+    assert "error" not in _call("data_quality", {"dataset_path": _series()})
+
+
+def test_plan_step_id_cannot_write_outside_workdir():
+    assert refs._safe_name("../../etc/evil") == "_.._etc_evil"
+    out = refs.write_json({}, name="../../evil")
+    assert os.path.realpath(refs._path(out)).startswith(os.path.realpath(refs.WORKDIR))
+
+
+def test_agent_checkpoint_folder_is_allowed_and_repo_code_is_not():
+    # save_to "artifacts/output/..." is how agents persist a fine-tune; the code next to it is not
+    assert refs._path("artifacts/output/tuned_models/x").endswith("artifacts/output/tuned_models/x")
+    for p in ("artifacts/tsfm_models", "src/servers/tsfm/main.py", "artifacts/output/../../src"):
+        try:
+            refs._path(p)
+            raise AssertionError(f"{p} accepted")
+        except ValueError:
+            pass
+
+
+# Allowlist covers what the recipe tools advertise (PR #633 review) ---------------------------
+import importlib
+
+import pandas as pd
+
+from ..substrate.resolver import ALLOWED_CLASSES
+
+
+def test_every_allowlisted_class_imports():
+    for path in sorted(ALLOWED_CLASSES):
+        module, name = path.rsplit(".", 1)
+        assert isinstance(getattr(importlib.import_module(module), name), type), path
+
+
+def _tab_panel(numeric_label=False):
+    rng = np.random.RandomState(0)
+    X = rng.randn(30, 16)
+    df = pd.DataFrame(X, columns=[f"f{i}" for i in range(16)])
+    df["label"] = X.mean(axis=1) if numeric_label else [0, 1] * 15
+    p = os.path.join(refs._ensure_workdir(), f"tab_{uuid.uuid4().hex[:6]}.csv")
+    df.to_csv(p, index=False)
+    return p
+
+
+def test_forecasting_transforms_run():
+    r = _forecast({"estimator": {"sktime_class": "sktime.forecasting.naive.NaiveForecaster"},
+                   "transforms": [
+                       {"sktime_class": "sktime.transformations.series.detrend.Detrender"},
+                       {"sktime_class": "sktime.transformations.series.adapt.TabularToSeriesAdaptor",
+                        "params": {"transformer": {
+                            "_target_": "sklearn.preprocessing.StandardScaler"}}}],
+                   "fh": [1, 2, 3]})
+    assert r.get("status") == "success", r
+
+
+def test_tabular_regression_runs():
+    r = _call("run_tabular_recipe", {"dataset_path": _tab_panel(numeric_label=True),
+              "label_column": "label",
+              "recipe": {"task": "tsfm_regression",
+                         "estimator": {"sktime_class": "sklearn.ensemble.RandomForestRegressor",
+                                       "params": {"n_estimators": 10}}}})
+    assert r.get("status") == "success", r
+
+
+def test_tabular_sktime_transform_runs():
+    r = _call("run_tabular_recipe", {"dataset_path": _tab_panel(), "label_column": "label",
+              "recipe": {"task": "tsfm_classification",
+                         "estimator": {"sktime_class": "sklearn.ensemble.RandomForestClassifier",
+                                       "params": {"n_estimators": 10}},
+                         "transforms": [{"sktime_class":
+                             "sktime.transformations.series.summarize.SummaryTransformer"}]}})
+    assert r.get("status") == "success", r

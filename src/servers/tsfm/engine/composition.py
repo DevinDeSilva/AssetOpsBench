@@ -204,7 +204,9 @@ def _save_checkpoint(fc, path: str) -> str:
             f"{type(fc).__name__} has none. A card can only point at weights via "
             f"params.model_path, so there is no card-loadable way to store this estimator."
         )
-    path = os.path.abspath(os.path.expanduser(path))
+    from ..io import refs
+
+    path = refs._path(str(path))  # confined to the data roots
     os.makedirs(path, exist_ok=True)
     model.save_pretrained(path)
     return path
