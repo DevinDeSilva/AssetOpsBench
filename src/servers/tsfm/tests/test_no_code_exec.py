@@ -160,3 +160,57 @@ def test_agent_checkpoint_folder_is_allowed_and_repo_code_is_not():
             raise AssertionError(f"{p} accepted")
         except ValueError:
             pass
+
+
+# Allowlist covers what the recipe tools advertise (PR #633 review) ---------------------------
+import importlib
+
+import pandas as pd
+
+from ..substrate.resolver import ALLOWED_CLASSES
+
+
+def test_every_allowlisted_class_imports():
+    for path in sorted(ALLOWED_CLASSES):
+        module, name = path.rsplit(".", 1)
+        assert isinstance(getattr(importlib.import_module(module), name), type), path
+
+
+def _tab_panel(numeric_label=False):
+    rng = np.random.RandomState(0)
+    X = rng.randn(30, 16)
+    df = pd.DataFrame(X, columns=[f"f{i}" for i in range(16)])
+    df["label"] = X.mean(axis=1) if numeric_label else [0, 1] * 15
+    p = os.path.join(refs._ensure_workdir(), f"tab_{uuid.uuid4().hex[:6]}.csv")
+    df.to_csv(p, index=False)
+    return p
+
+
+def test_forecasting_transforms_run():
+    r = _forecast({"estimator": {"sktime_class": "sktime.forecasting.naive.NaiveForecaster"},
+                   "transforms": [
+                       {"sktime_class": "sktime.transformations.series.detrend.Detrender"},
+                       {"sktime_class": "sktime.transformations.series.adapt.TabularToSeriesAdaptor",
+                        "params": {"transformer": {
+                            "_target_": "sklearn.preprocessing.StandardScaler"}}}],
+                   "fh": [1, 2, 3]})
+    assert r.get("status") == "success", r
+
+
+def test_tabular_regression_runs():
+    r = _call("run_tabular_recipe", {"dataset_path": _tab_panel(numeric_label=True),
+              "label_column": "label",
+              "recipe": {"task": "tsfm_regression",
+                         "estimator": {"sktime_class": "sklearn.ensemble.RandomForestRegressor",
+                                       "params": {"n_estimators": 10}}}})
+    assert r.get("status") == "success", r
+
+
+def test_tabular_sktime_transform_runs():
+    r = _call("run_tabular_recipe", {"dataset_path": _tab_panel(), "label_column": "label",
+              "recipe": {"task": "tsfm_classification",
+                         "estimator": {"sktime_class": "sklearn.ensemble.RandomForestClassifier",
+                                       "params": {"n_estimators": 10}},
+                         "transforms": [{"sktime_class":
+                             "sktime.transformations.series.summarize.SummaryTransformer"}]}})
+    assert r.get("status") == "success", r
