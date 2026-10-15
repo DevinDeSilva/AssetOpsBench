@@ -61,27 +61,6 @@ ALLOWED_CLASSES = frozenset({
     "sktime.clustering.dbscan.TimeSeriesDBSCAN",
     "sktime.clustering.kernel_k_means.TimeSeriesKernelKMeans",
     "sktime.clustering.agglomerative.TimeSeriesAgglomerativeClustering",
-    # forecasting `transforms` (TransformedTargetForecaster steps)
-    "sktime.transformations.series.detrend.Detrender",
-    "sktime.transformations.series.detrend.Deseasonalizer",
-    "sktime.transformations.series.difference.Differencer",
-    "sktime.transformations.series.boxcox.LogTransformer",
-    "sktime.transformations.series.boxcox.BoxCoxTransformer",
-    "sktime.transformations.series.exponent.ExponentTransformer",
-    "sktime.transformations.series.impute.Imputer",
-    "sktime.transformations.series.adapt.TabularToSeriesAdaptor",
-    "sktime.forecasting.trend.PolynomialTrendForecaster",  # Detrender's default forecaster
-    "sklearn.preprocessing.StandardScaler",
-    "sklearn.preprocessing.MinMaxScaler",
-    # run_tabular_recipe transforms (panel -> features)
-    "sktime.transformations.series.summarize.SummaryTransformer",
-    "sktime.transformations.panel.catch22.Catch22",
-    "sktime.transformations.panel.rocket.MiniRocket",
-    # run_tabular_recipe estimators: tsfm_regression / tsfm_clustering
-    "sklearn.ensemble.RandomForestRegressor",
-    "sklearn.ensemble.GradientBoostingRegressor",
-    "sklearn.linear_model.Ridge",
-    "sklearn.cluster.KMeans",
 })
 
 
@@ -129,33 +108,7 @@ def resolve(card: dict):
         raise ValueError(f"card '{card.get('model_id')}' has no sktime_class")
     Est = _import_target(path)
     params = {k: _build(v) for k, v in (card.get("params") or {}).items()}
-    if isinstance(params.get("training_args"), dict):
-        params["training_args"] = _safe_training_args(params["training_args"])
     return Est(**params)
-
-
-# HF TrainingArguments keys that name a path or an outside service. output_dir is forced to a
-# server-chosen folder; the rest are refused, so a fine-tune writes (and pickles) only there.
-_TRAINING_ARGS_REFUSED = frozenset({
-    "logging_dir", "resume_from_checkpoint", "deepspeed", "fsdp_config", "accelerator_config",
-    "push_to_hub", "hub_model_id", "hub_token", "hub_strategy", "hub_private_repo",
-    "hub_always_push", "run_name",
-})
-
-
-def _safe_training_args(ta: dict) -> dict:
-    import os
-    import uuid
-
-    from ..io import refs
-
-    bad = sorted(k for k in ta if k in _TRAINING_ARGS_REFUSED or k.startswith("hub_"))
-    if bad:
-        raise ValueError(f"training_args may not set {bad}")
-    out = dict(ta)
-    out["output_dir"] = os.path.join(refs._ensure_workdir(), "trainer", uuid.uuid4().hex[:8])
-    out["report_to"] = "none"
-    return out
 
 
 def discover(scitype: str, filter_tags: Optional[dict] = None) -> List[str]:
