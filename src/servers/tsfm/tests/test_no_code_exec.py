@@ -13,6 +13,7 @@ import time
 import uuid
 
 import numpy as np
+import pandas as pd
 
 from ..io import refs
 from ..main import mcp
@@ -106,6 +107,58 @@ def test_hub_downloads_default_to_offline():
 def test_allowlisted_estimator_still_runs():
     r = _forecast({"estimator": {"sktime_class": "sktime.forecasting.naive.NaiveForecaster"},
                    "fh": [1, 2, 3]})
+    assert r.get("status") == "success", r
+
+
+def test_every_allowed_class_imports_and_is_not_callable():
+    # Params typed as callables (KNeighbors `metric`, ConditionalDeseasonalizer
+    # `seasonality_test`) can only receive instances of these classes, so none may be callable.
+    from ..substrate.resolver import ALLOWED_CLASSES, _import_target
+
+    for path in ALLOWED_CLASSES:
+        cls = _import_target(path)
+        assert isinstance(cls, type), path
+        assert not any("__call__" in vars(k) for k in cls.__mro__ if k is not object), path
+
+
+def _tabular_csv(numeric_label=False):
+    rng = np.random.RandomState(0)
+    X = rng.randn(30, 16)
+    df = pd.DataFrame(X, columns=[f"f{i}" for i in range(16)])
+    df["label"] = X.mean(axis=1) if numeric_label else [0, 1] * 15
+    p = os.path.join(refs._ensure_workdir(), f"tab_{uuid.uuid4().hex[:6]}.csv")
+    df.to_csv(p, index=False)
+    return p
+
+
+def test_forecasting_transforms_still_run():
+    r = _forecast({"estimator": {"sktime_class": "sktime.forecasting.naive.NaiveForecaster"},
+                   "transforms": [
+                       {"sktime_class": "sktime.transformations.series.detrend.Detrender"},
+                       {"sktime_class": "sktime.transformations.series.exponent.ExponentTransformer"},
+                       {"sktime_class": "sktime.transformations.series.adapt.TabularToSeriesAdaptor",
+                        "params": {"transformer": {
+                            "_target_": "sklearn.preprocessing.StandardScaler"}}}],
+                   "fh": [1, 2, 3]})
+    assert r.get("status") == "success", r
+
+
+def test_tabular_regression_still_runs():
+    r = _call("run_tabular_recipe", {"dataset_path": _tabular_csv(numeric_label=True),
+              "label_column": "label",
+              "recipe": {"task": "tsfm_regression",
+                         "estimator": {"sktime_class": "sklearn.ensemble.RandomForestRegressor",
+                                       "params": {"n_estimators": 10}}}})
+    assert r.get("status") == "success", r
+
+
+def test_tabular_sktime_transform_still_runs():
+    r = _call("run_tabular_recipe", {"dataset_path": _tabular_csv(), "label_column": "label",
+              "recipe": {"task": "tsfm_classification",
+                         "estimator": {"sktime_class": "sklearn.ensemble.RandomForestClassifier",
+                                       "params": {"n_estimators": 10}},
+                         "transforms": [{"sktime_class":
+                             "sktime.transformations.series.summarize.SummaryTransformer"}]}})
     assert r.get("status") == "success", r
 
 
