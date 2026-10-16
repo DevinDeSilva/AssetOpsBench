@@ -266,7 +266,7 @@ When the scenario's `groundtruth_eval.json` has `required_terms`, the score is
    `batteries`), appears in the value under the key. Irregular forms such as
    `criteria` / `criterion` still need listing.
 
-The scenario passes when recall is at least 0.5 (`CAR_PASS_THRESHOLD`).
+The scenario passes when recall is at least 0.75 (`CAR_PASS_THRESHOLD`).
 `precision` and `f1` are `null`: precision needs a count of what the model
 asserted, and a free-text value gives none, so it could only repeat recall.
 For the example above (two concepts):
