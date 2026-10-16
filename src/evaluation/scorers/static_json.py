@@ -429,8 +429,10 @@ def similarity_score(gold_value: str, model_value: str) -> float:
 
 _MODE_KEYS = frozenset({"response", "clarification", "abstain"})
 # A CAR answer scored against groundtruth_eval.json concepts passes at this
-# recall.
-CAR_PASS_THRESHOLD = 0.5
+# recall. At 0.75 a scenario with fewer than four required concepts cannot
+# express the boundary: with two concepts coverage is only 0, 0.5 or 1.0, so
+# the rule collapses onto full coverage there.
+CAR_PASS_THRESHOLD = 0.75
 _IMPORTANT_MODE_TERMS = (
     "air conditioner",
     "cannot determine",

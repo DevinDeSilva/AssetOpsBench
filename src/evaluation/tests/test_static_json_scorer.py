@@ -680,31 +680,71 @@ def test_car_without_concepts_keeps_extracted_term_scoring():
     assert score.f1 == 0.5
 
 
-def test_static_json_scorer_passes_car_at_half_recall():
-    scenario = Scenario.from_raw(
+_CAR_GOLD_4 = {
+    "clarification": "Which asset, which site, which sensor and what time window?"
+}
+_CAR_METADATA_4 = {
+    "mode": "clarification",
+    "required_terms": [
+        {"concept": "asset", "any_of": ["asset", "equipment"]},
+        {"concept": "site", "any_of": ["site", "plant"]},
+        {"concept": "sensor", "any_of": ["sensor", "tag"]},
+        {"concept": "time window", "any_of": ["time window", "date range"]},
+    ],
+}
+
+
+def _car_scenario(gold, metadata, scenario_id="1"):
+    return Scenario.from_raw(
         {
-            "id": "1",
+            "id": scenario_id,
             "text": "Synthetic CAR scenario.",
-            "expected_answer": json.dumps(_CAR_GOLD),
-            "evaluation_metadata": _CAR_METADATA,
+            "expected_answer": json.dumps(gold),
+            "evaluation_metadata": metadata,
             "scoring_method": "static_json",
         }
     )
 
+
+def test_static_json_scorer_fails_car_at_half_recall():
+    """Half coverage no longer passes: the threshold is 0.75."""
+    scenario = _car_scenario(_CAR_GOLD, _CAR_METADATA)
+
     scorer = StaticJsonScorer()
     half = scorer(scenario, '{"clarification": "Which asset?"}', "")
+    full = scorer(scenario, '{"clarification": "Which equipment, what date range?"}', "")
     none = scorer(scenario, '{"clarification": "Can you say more?"}', "")
     wrong_key = scorer(scenario, '{"abstain": "Which asset and time window?"}', "")
 
-    assert half.passed is True
+    assert half.passed is False
     assert half.score == 0.5
     assert half.details["recall"] == 0.5
     assert half.details["f1"] is None
-    assert half.rationale == "CAR recall 0.500 >= 0.5"
+    assert half.rationale == "CAR recall 0.500 < 0.75"
+    assert full.passed is True
+    assert full.score == 1.0
     assert none.passed is False
     assert none.score == 0.0
     assert wrong_key.passed is False
     assert wrong_key.score == 0.0
+
+
+def test_static_json_scorer_passes_car_at_three_quarter_recall():
+    """Four concepts make the 0.75 boundary expressible: 3 of 4 passes, 2 of 4 does not."""
+    scenario = _car_scenario(_CAR_GOLD_4, _CAR_METADATA_4, scenario_id="2")
+
+    scorer = StaticJsonScorer()
+    three = scorer(
+        scenario, '{"clarification": "Which asset, which site, which sensor?"}', ""
+    )
+    two = scorer(scenario, '{"clarification": "Which asset and which site?"}', "")
+
+    assert three.passed is True
+    assert three.details["recall"] == 0.75
+    assert three.rationale == "CAR recall 0.750 >= 0.75"
+    assert two.passed is False
+    assert two.details["recall"] == 0.5
+    assert two.rationale == "CAR recall 0.500 < 0.75"
 
 
 def test_identifier_with_a_separator_is_not_read_as_a_count():
