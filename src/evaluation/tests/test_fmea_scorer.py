@@ -103,7 +103,7 @@ def test_trajectory_reports_catalog_and_out_of_scope_tool_use():
     assert result.details["catalog_process_compliant"] is False
 
 
-def test_pass_uses_strict_greater_than_point_seven_f1():
+def test_pass_requires_at_least_point_eight_f1():
     scenario = _scenario(
         {"asset": "Electric Motor", "failure_modes": {str(i): "" for i in range(7)}}
     )
@@ -117,10 +117,10 @@ def test_pass_uses_strict_greater_than_point_seven_f1():
     result = fmea_score(scenario, json.dumps(below), "")
     assert result.score == pytest.approx(4 / 7, abs=1e-6)
     assert result.passed is False
-    assert result.details["f1_pass_threshold"] == 0.7
+    assert result.details["f1_pass_threshold"] == 0.8
 
 
-def test_f1_above_point_seven_passes_without_requiring_exact_match():
+def test_f1_above_point_eight_passes_without_requiring_exact_match():
     scenario = _scenario(
         {"asset": "Electric Motor", "failure_modes": {str(i): "" for i in range(8)}}
     )
