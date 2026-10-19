@@ -207,7 +207,10 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
         if isinstance(threshold_value, (int, float))
         else _DEFAULT_F1_PASS_THRESHOLD
     )
-    passed = semantic_f1 >= f1_pass_threshold
+    # Compare at the reported precision: 2PR/(P+R) lands just under an exact
+    # boundary (6/7 and 6/8 give 0.7999999999999999), failing a 0.8 threshold.
+    score = round(semantic_f1, 6)
+    passed = score >= f1_pass_threshold
     strict_success = semantic_exact and json_only and exact_top_keys
     baseline_f1 = _metadata(scenario, "reference_answer").get("f1")
     details: dict[str, Any] = {
@@ -239,7 +242,7 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
     return ScorerResult(
         scorer="fmea",
         passed=passed,
-        score=round(semantic_f1, 6),
+        score=score,
         rationale=rationale,
         details=details,
     )
