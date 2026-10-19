@@ -141,7 +141,7 @@ def _load_scenario_dir(path: Path) -> list[Scenario]:
                     "type": "structured",
                     "expected_answer": expected_answer,
                     "evaluation_metadata": evaluation_metadata or None,
-                    "scoring_method": scoring_method or "static_json",
+                    "scoring_method": scoring_method,
                 }
             )
         )

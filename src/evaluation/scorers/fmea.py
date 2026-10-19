@@ -15,7 +15,7 @@ _REQUIRED_CATALOG_TOOLS = {
     "utilities__get_failure_mode_catalog",
 }
 _DOMAIN_PREFIXES = ("fmsr__", "iot__", "tsfm__", "vibration__", "wo__")
-_DEFAULT_F1_PASS_THRESHOLD = 0.70
+_DEFAULT_F1_PASS_THRESHOLD = 0.80
 
 
 def _strict_json_object(answer: str) -> tuple[dict[str, Any] | None, list[str]]:
@@ -207,7 +207,10 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
         if isinstance(threshold_value, (int, float))
         else _DEFAULT_F1_PASS_THRESHOLD
     )
-    passed = semantic_f1 > f1_pass_threshold
+    # Compare at the reported precision: 2PR/(P+R) lands just under an exact
+    # boundary (6/7 and 6/8 give 0.7999999999999999), failing a 0.8 threshold.
+    score = round(semantic_f1, 6)
+    passed = score >= f1_pass_threshold
     strict_success = semantic_exact and json_only and exact_top_keys
     baseline_f1 = _metadata(scenario, "reference_answer").get("f1")
     details: dict[str, Any] = {
@@ -217,7 +220,7 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
         "weights": weights,
         "semantic_f1": semantic_f1,
         "f1_pass_threshold": f1_pass_threshold,
-        "f1_threshold_operator": ">",
+        "f1_threshold_operator": ">=",
         "rubric_weighted_score": rubric_weighted_score,
         "raw_weighted_score": rubric_weighted_score,
         "strict_success": strict_success,
@@ -232,14 +235,14 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
     }
     rationale = (
         f"Semantic F1={semantic_f1:.3f} "
-        f"({'>' if passed else '<='} {f1_pass_threshold:.2f}); "
+        f"({'>=' if passed else '<'} {f1_pass_threshold:.2f}); "
         f"coverage={recall:.3f}, precision={precision:.3f}, "
         f"rubric_weighted_score={rubric_weighted_score:.3f}."
     )
     return ScorerResult(
         scorer="fmea",
         passed=passed,
-        score=round(semantic_f1, 6),
+        score=score,
         rationale=rationale,
         details=details,
     )

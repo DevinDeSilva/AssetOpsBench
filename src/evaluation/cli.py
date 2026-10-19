@@ -57,9 +57,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--scorer-default",
         dest="scorer_default",
-        default="llm_judge",
+        default="static_json",
         help="Scorer name when scenario.scoring_method is unset. "
-        "Default: llm_judge.",
+        "Default: static_json.",
     )
     p.add_argument(
         "--judge-model",

@@ -33,7 +33,7 @@ class Evaluator:
 
     def __init__(
         self,
-        default_scorer: str = "llm_judge",
+        default_scorer: str = "static_json",
         judge_model: str | None = None,
     ) -> None:
         self.default_scorer = default_scorer
