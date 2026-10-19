@@ -18,8 +18,8 @@ cd /opt/aob || {
     exit 0
 }
 
-# The CLI's default scorer, llm_judge, exists only with --judge-model, so name
-# static_json as the fallback. The scenario's own scoring_method still wins.
+# static_json is also the CLI's default; naming it keeps the fallback explicit.
+# The scenario's own scoring_method still wins.
 judge_args=(--scorer-default static_json)
 if [ -n "${AOB_JUDGE_MODEL:-}" ]; then
     judge_args+=(--judge-model "${AOB_JUDGE_MODEL}")

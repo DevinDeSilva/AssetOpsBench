@@ -307,13 +307,13 @@ on `main`, and a value above what Docker has fails the run
 ## Scoring
 
 `evaluation.loader` takes each scenario's `scoring_method` from
-`scenario_meta.json`, defaulting to `static_json`, and it wins over
-`--scorer-default`. The open profile and mini (whose FMEA scenarios use `fmea`)
-need no judge model. `tests/test.sh` passes `--judge-model` only when
-`AOB_JUDGE_MODEL` is set, and always passes `--scorer-default static_json`,
-because the CLI's own default, `llm_judge`, is registered only with a judge
-model and would otherwise fail every scenario with
-`unknown scorer 'llm_judge'`.
+`scenario_meta.json`, and it wins over `--scorer-default`. A scenario without
+one falls back to `--scorer-default`, which is `static_json`. The open profile
+and mini (whose FMEA scenarios use `fmea`) need no judge model.
+`tests/test.sh` passes `--judge-model` only when `AOB_JUDGE_MODEL` is set, and
+passes `--scorer-default static_json` to keep the fallback explicit. A scenario
+whose `scenario_meta.json` asks for `llm_judge` stops the evaluation with
+`unknown scorer 'llm_judge'` unless a judge model is given.
 
 The generator copies every file the loader reads into
 `tests/scenarios/scenario_N/`: `question.txt`, `groundtruth.txt`,

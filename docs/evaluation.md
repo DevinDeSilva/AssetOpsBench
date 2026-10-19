@@ -191,7 +191,7 @@ uv run evaluate \
   --trajectories DIR_OR_FILE     # required
   --scenarios FILE [FILE ...]    # required, one or more
   [--reports-dir DIR]            # default: reports/
-  [--scorer-default NAME]        # default: llm_judge
+  [--scorer-default NAME]        # default: static_json
   [--judge-model MODEL_ID]       # required when llm_judge runs
   [-v]
 ```
@@ -203,11 +203,13 @@ uv run evaluate \
 | ------------- | ---------------------- | ------------------------------------------- |
 | LLM-As-Judge  | `llm_judge`            | Works. Installed by passing `--judge-model` |
 | Code-Based    | `static_json`          | Works. Deterministic scorer for structured answers |
+| Code-Based    | `fmea`                 | Works. Semantic F1 for FMEA catalogue answers ([FMEA Evaluation](fmea-evaluation.md)) |
+| Code-Based    | `fcc`                  | Works. Numeric tolerance or set F1 for FCC answers, from `scenario_meta.json` |
 | Code-Based    | `exact_string_match`   | **Skeleton — `NotImplementedError`**        |
 | Code-Based    | `numeric_match`        | **Skeleton — `NotImplementedError`**        |
 | Semantic-Score| `semantic_similarity`  | **Skeleton — `NotImplementedError`**        |
 
-`static_json` is registered automatically and can be selected with `--scorer-default static_json`. It compares the final answer from a saved trajectory against `scenario.expected_answer`, parsing JSON objects, arrays, Python-style literals, tuple lists, nested structures, markdown-fenced answers, answer-prefixed outputs, and count-only answers. See [Static JSON Evaluation](static-json-evaluation.md) for details.
+`static_json` is registered automatically and scores every scenario that names no `scoring_method`, unless `--scorer-default` picks another scorer. It compares the final answer from a saved trajectory against `scenario.expected_answer`, parsing JSON objects, arrays, Python-style literals, tuple lists, nested structures, markdown-fenced answers, answer-prefixed outputs, and count-only answers. See [Static JSON Evaluation](static-json-evaluation.md) for details.
 
 Skeleton scorers don't auto-register; calling them raises
 `NotImplementedError`. Fill in the body and call

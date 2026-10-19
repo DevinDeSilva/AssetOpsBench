@@ -118,8 +118,10 @@ base. `AOB_RUNTIME_IMAGE` is unset in this shell and there is no local
 `assetopsbench/runtime:dev`, or it names an image that is not local. Redo
 step 2 in this shell.
 
-**`unknown scorer 'llm_judge'`**: you are calling `evaluate` by hand without
-`--scorer-default`. Copy what the task's `tests/test.sh` does.
+**`unknown scorer 'llm_judge'`**: a scenario's `scenario_meta.json` routes it
+to `llm_judge`, or `--scorer-default llm_judge` was passed, and no judge model
+was given. Set `AOB_JUDGE_MODEL`, or pass `--judge-model` when calling
+`evaluate` by hand.
 
 **The verifier scores 0 but the agent clearly answered**: check
 `verifier/test-stderr.txt`. The evaluator joins records to scenarios on

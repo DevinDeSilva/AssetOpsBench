@@ -149,3 +149,36 @@ def test_f1_above_point_eight_passes_without_requiring_exact_match():
     assert result.score == pytest.approx(6 / 7, abs=1e-6)
     assert result.passed is True
     assert result.details["strict_success"] is False
+
+
+def _six_of_eight(threshold):
+    """An answer with F1 6/7 (0.857) against a scenario carrying ``threshold``."""
+    scenario = _scenario(
+        {"asset": "Electric Motor", "failure_modes": {str(i): "" for i in range(8)}}
+    )
+    if threshold != "unset":
+        scenario.evaluation_metadata["scenario_meta"]["f1_pass_threshold"] = threshold
+    answer = {"asset": "Electric Motor", "failure_modes": {str(i): "" for i in range(6)}}
+    return fmea_score(scenario, json.dumps(answer), "")
+
+
+def test_scenario_threshold_overrides_the_default():
+    result = _six_of_eight(0.9)
+    assert result.details["f1_pass_threshold"] == 0.9
+    assert result.passed is False
+
+
+@pytest.mark.parametrize("threshold", ["unset", None])
+def test_unset_threshold_uses_the_default(threshold):
+    result = _six_of_eight(threshold)
+    assert result.details["f1_pass_threshold"] == 0.8
+    assert result.passed is True
+
+
+@pytest.mark.parametrize("threshold", [True, -0.1, 1.5, 80, "0.8", float("nan")])
+def test_invalid_threshold_fails_the_scenario_with_a_rationale(threshold):
+    result = _six_of_eight(threshold)
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.details["error"] == "invalid_scenario_meta"
+    assert "f1_pass_threshold" in result.rationale

@@ -1,9 +1,12 @@
 # FMEA evaluation
 
 The `fmea` scorer evaluates structured FMEA catalogue scenarios without an
-LLM call. Its primary score is semantic F1, and a scenario passes when its F1
-is strictly greater than `0.70`. The rubric-weighted composite and strict exact
-success remain available as secondary diagnostics.
+LLM call. Its primary score is semantic F1, and a scenario passes when its F1,
+rounded to the 6 decimals it is reported at, is at least the scenario's
+`f1_pass_threshold` from `scenario_meta.json` (default `0.80`). A threshold
+that is not a number in [0, 1] fails the scenario with a rationale. The
+rubric-weighted composite and strict exact success remain available as
+secondary diagnostics.
 
 For `asset_modes` scenarios, the scorer measures failure-mode set recall,
 failure-mode set precision, output-contract compliance, and exact
