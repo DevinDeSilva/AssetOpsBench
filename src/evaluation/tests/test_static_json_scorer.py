@@ -776,3 +776,145 @@ def test_count_rescue_still_reads_a_number_out_of_prose():
     assert parse_structured_answer("The answer is 10.") == 10
     assert parse_structured_answer("10") == 10
     assert normalize_value("PMP42144") == "pmp42144"
+
+
+_RATES_GOLD = [
+    {"asset": "D", "failures_per_year": 125.2},
+    {"asset": "B", "failures_per_year": 85.0},
+    {"asset": "E", "failures_per_year": 75.6},
+    {"asset": "C", "failures_per_year": 54.1},
+    {"asset": "A", "failures_per_year": 13.2},
+]
+
+
+def _rates_scenario(meta):
+    return Scenario.from_raw(
+        {
+            "id": "410",
+            "text": "Breakdown rate per machine, highest to lowest.",
+            "expected_answer": json.dumps(_RATES_GOLD),
+            "evaluation_metadata": {"scenario_meta": meta},
+            "scoring_method": "static_json",
+        }
+    )
+
+
+def _rates(*values, assets="DBECA"):
+    return json.dumps(
+        [
+            {"asset": asset, "failures_per_year": value}
+            for asset, value in zip(assets, values)
+        ]
+    )
+
+
+_TEN_PERCENT = {
+    "scoring_method": "static_json",
+    "match": "numeric",
+    "relative_tolerance": 0.1,
+}
+
+
+def test_relative_tolerance_passes_rates_within_ten_percent():
+    result = StaticJsonScorer()(
+        _rates_scenario(_TEN_PERCENT), _rates(122.4, 83.8, 73.5, 53.0, 13.0), ""
+    )
+
+    assert result.passed is True
+    assert result.score == 1.0
+    assert result.details["relative_tolerance"] == 0.1
+    assert result.details["tolerance_operator"] == "<="
+    assert result.details["strict_exact_match_accuracy"] == 0.0
+    assert result.rationale.startswith("10 of 10 values accepted")
+
+
+@pytest.mark.parametrize(
+    ("b_rate", "passed"), [(93.5, True), (76.5, True), (93.6, False)]
+)
+def test_relative_tolerance_boundary_is_inclusive(b_rate, passed):
+    result = StaticJsonScorer()(
+        _rates_scenario(_TEN_PERCENT), _rates(125.2, b_rate, 75.6, 54.1, 13.2), ""
+    )
+
+    assert result.passed is passed
+
+
+def test_relative_tolerance_fails_counting_every_work_order():
+    result = StaticJsonScorer()(
+        _rates_scenario(_TEN_PERCENT), _rates(285.9, 243.1, 164.4, 104.9, 30.1), ""
+    )
+
+    assert result.passed is False
+    assert result.score == 0.5
+    rejected = [
+        v["key"] for v in result.details["tolerance_values"] if not v["accepted"]
+    ]
+    assert len(rejected) == 5
+    assert all(key.endswith(".failures_per_year") for key in rejected)
+
+
+def test_relative_tolerance_keeps_list_order_and_asset_ids_exact():
+    swapped = StaticJsonScorer()(
+        _rates_scenario(_TEN_PERCENT),
+        _rates(125.2, 75.6, 85.0, 54.1, 13.2, assets="DEBCA"),
+        "",
+    )
+    renamed = StaticJsonScorer()(
+        _rates_scenario(_TEN_PERCENT),
+        _rates(125.2, 85.0, 75.6, 54.1, 13.2, assets="DBECX"),
+        "",
+    )
+
+    assert swapped.passed is False
+    assert renamed.passed is False
+
+
+def test_relative_tolerance_fails_on_an_extra_key():
+    answer = json.loads(_rates(125.2, 85.0, 75.6, 54.1, 13.2))
+    answer[0]["note"] = "worst unit"
+
+    result = StaticJsonScorer()(_rates_scenario(_TEN_PERCENT), json.dumps(answer), "")
+
+    assert result.passed is False
+    assert result.details["extra_keys"] == ["answer[0].note"]
+
+
+def test_relative_tolerance_reads_a_fenced_answer():
+    answer = "```json\n" + _rates(122.4, 83.8, 73.5, 53.0, 13.0) + "\n```"
+
+    result = StaticJsonScorer()(_rates_scenario(_TEN_PERCENT), answer, "")
+
+    assert result.passed is True
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {"match": "numeric"},
+        {"match": "numeric", "relative_tolerance": -0.1},
+        {"match": "numeric", "relative_tolerance": True},
+        {"match": "numeric", "relative_tolerance": "0.1"},
+        {"match": "set_f1", "relative_tolerance": 0.1},
+    ],
+)
+def test_relative_tolerance_rejects_invalid_scenario_meta(meta):
+    result = StaticJsonScorer()(
+        _rates_scenario({"scoring_method": "static_json", **meta}),
+        json.dumps(_RATES_GOLD),
+        "",
+    )
+
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.details["error"] == "invalid_scenario_meta"
+
+
+def test_scenario_meta_without_match_keeps_strict_matching():
+    scenario = _rates_scenario({"scoring_method": "static_json"})
+
+    exact = StaticJsonScorer()(scenario, json.dumps(_RATES_GOLD), "")
+    near = StaticJsonScorer()(scenario, _rates(125.2, 85.0, 75.6, 54.1, 13.0), "")
+
+    assert exact.passed is True
+    assert near.passed is False
+    assert near.rationale == "structured answer differs from ground truth"

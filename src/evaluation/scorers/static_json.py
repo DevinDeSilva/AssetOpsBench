@@ -1146,6 +1146,70 @@ def evaluate_static_json_batch(
         "examples": [score.to_dict() for score in scores],
     }
 
+
+def _scenario_meta(scenario: Scenario) -> dict[str, Any]:
+    metadata = scenario.evaluation_metadata or {}
+    value = metadata.get("scenario_meta", {})
+    return value if isinstance(value, dict) else {}
+
+
+def _relative_tolerance(meta: dict[str, Any]) -> float | None:
+    value = meta.get("relative_tolerance")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return float(value)
+
+
+def evaluate_relative_tolerance(
+    gold_answer: Any,
+    model_answer: Any,
+    tolerance: float,
+) -> tuple[bool, float, list[dict[str, Any]]]:
+    """Compare flattened values, letting each number differ by ``tolerance`` x |gold|.
+
+    Keys are positional, so a list must keep the gold order. Non-numeric values
+    such as asset ids must match exactly, and an extra key fails the answer.
+    Comparisons are inclusive and made on values rounded to 6 decimals.
+    """
+    gold_flat = flatten_answer(gold_answer)
+    model_flat = flatten_answer(model_answer)
+
+    values: list[dict[str, Any]] = []
+    accepted = 0
+    for key, gold_value in gold_flat.items():
+        model_value = model_flat.get(key)
+        entry: dict[str, Any] = {
+            "key": key,
+            "gold_value": gold_value,
+            "model_value": "MISSING" if model_value is None else model_value,
+        }
+        gold_num = _as_float(gold_value)
+        if model_value is None:
+            ok = False
+        elif gold_num is None:
+            ok = model_value == gold_value
+        else:
+            model_num = _as_float(model_value)
+            allowed = round(tolerance * abs(gold_num), 6)
+            delta = None if model_num is None else round(abs(model_num - gold_num), 6)
+            ok = delta is not None and delta <= allowed
+            entry.update(delta=delta, allowed_delta=allowed)
+        entry["accepted"] = ok
+        accepted += ok
+        values.append(entry)
+
+    extra = len(set(model_flat) - set(gold_flat))
+    precision = accepted / len(model_flat) if model_flat else 0.0
+    recall = accepted / len(gold_flat) if gold_flat else 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
+    )
+    passed = accepted == len(gold_flat) and extra == 0
+    return passed, f1, values
+
+
 class StaticJsonScorer:
     """Evaluation scorer wrapper for the trajectory-based pipeline."""
 
@@ -1174,6 +1238,9 @@ class StaticJsonScorer:
         static_score = evaluate_static_json(
             gold_answer, answer, eval_metadata=scenario.evaluation_metadata
         )
+        meta = _scenario_meta(scenario)
+        if "match" in meta:
+            return self._score_numeric(gold_answer, answer, meta, static_score)
         if static_score.f1 is None:
             # CAR scored on groundtruth_eval.json concepts: recall only.
             score = static_score.recall
@@ -1197,6 +1264,51 @@ class StaticJsonScorer:
             score=round(score, 3),
             rationale=rationale,
             details=static_score.to_dict(),
+        )
+
+    def _score_numeric(
+        self,
+        gold_answer: Any,
+        answer: str,
+        meta: dict[str, Any],
+        static_score: StaticJsonScore,
+    ) -> ScorerResult:
+        """Score with ``{"match": "numeric", "relative_tolerance": t}`` from scenario_meta.json."""
+        details = static_score.to_dict()
+        tolerance = _relative_tolerance(meta)
+        if meta.get("match") != "numeric" or tolerance is None:
+            return ScorerResult(
+                scorer=self.name,
+                passed=False,
+                score=0.0,
+                rationale=(
+                    "scenario_meta.json needs match 'numeric' and a non-negative "
+                    f"relative_tolerance; got match={meta.get('match')!r}, "
+                    f"relative_tolerance={meta.get('relative_tolerance')!r}."
+                ),
+                details={**details, "error": "invalid_scenario_meta"},
+            )
+
+        passed, f1, values = evaluate_relative_tolerance(gold_answer, answer, tolerance)
+        accepted = sum(1 for value in values if value["accepted"])
+        extra = len(details["extra_keys"])
+        rationale = (
+            f"{accepted} of {len(values)} values accepted "
+            f"(numbers within relative_tolerance {tolerance:g} of gold), "
+            f"{extra} extra keys"
+        )
+        return ScorerResult(
+            scorer=self.name,
+            passed=passed,
+            score=round(f1, 3),
+            rationale=rationale,
+            details={
+                **details,
+                "match": "numeric",
+                "relative_tolerance": tolerance,
+                "tolerance_operator": "<=",
+                "tolerance_values": values,
+            },
         )
 
 
