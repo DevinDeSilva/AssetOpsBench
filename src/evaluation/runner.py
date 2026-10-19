@@ -13,7 +13,7 @@ def evaluate(
     *,
     trajectories_path: Path,
     scenarios_paths: list[Path],
-    default_scoring_method: str = "llm_judge",
+    default_scoring_method: str = "static_json",
     judge_model: str | None = None,
     scenario_ids: Collection[str] | None = None,
 ) -> EvalReport:
