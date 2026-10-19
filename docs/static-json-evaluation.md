@@ -238,7 +238,19 @@ object.
 | `extra_keys`                   | Keys present in model output but not in gold                                          |
 | `details`                      | Per-key comparison records                                                            |
 
-The scorer marks a scenario as passed only when the structured answer is a strict exact match, and reports `f1` as `score`. Partial correctness is still available through `score`, `f1`, `partial_exact_match_accuracy`, and detailed key-level results. CAR scenarios with `groundtruth_eval.json` are the exception: see below.
+The scorer marks a scenario as passed only when the structured answer is a strict exact match, and reports `f1` as `score`. Partial correctness is still available through `score`, `f1`, `partial_exact_match_accuracy`, and detailed key-level results. Two kinds of scenario are the exception: those that opt in to a numeric tolerance, and CAR scenarios with `groundtruth_eval.json`. See below.
+
+### Numeric tolerance
+
+A scenario can let numbers differ from the gold answer through `scenario_meta.json`:
+
+```json
+{"scoring_method": "static_json", "match": "numeric", "relative_tolerance": 0.1}
+```
+
+Every flattened gold value must be present. A numeric value is accepted when `|answer - gold| <= relative_tolerance x |gold|`. Any other value, such as an asset id, must match exactly. Keys stay positional, so a list must keep the gold order, and an extra key fails the answer. Comparisons are inclusive and made on values rounded to 6 decimals. The score is F1 over accepted keys, and the per-value results are reported under `tolerance_values`.
+
+A `match` other than `numeric`, or a missing, negative or non-numeric `relative_tolerance`, fails the scenario with a rationale. Scenarios without a `match` key are scored by strict match as above.
 
 ### CAR metrics and pass criteria
 
