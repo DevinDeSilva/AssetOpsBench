@@ -40,6 +40,17 @@ def _metadata(scenario: Scenario, key: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _f1_pass_threshold(meta: dict[str, Any]) -> float | None:
+    """Read f1_pass_threshold, defaulting when unset; None when it is not in [0, 1]."""
+    value = meta.get("f1_pass_threshold")
+    if value is None:
+        return _DEFAULT_F1_PASS_THRESHOLD
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    # NaN fails the range test too.
+    return float(value) if 0.0 <= value <= 1.0 else None
+
+
 def _weights(scenario: Scenario) -> dict[str, float]:
     defaults = {
         "coverage": 0.35,
@@ -183,6 +194,18 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
 
     model = tolerant_model if isinstance(tolerant_model, dict) else {}
     meta = _metadata(scenario, "scenario_meta")
+    f1_pass_threshold = _f1_pass_threshold(meta)
+    if f1_pass_threshold is None:
+        return ScorerResult(
+            scorer="fmea",
+            passed=False,
+            score=0.0,
+            rationale=(
+                "scenario_meta.json f1_pass_threshold must be a number in [0, 1]; "
+                f"got {meta.get('f1_pass_threshold')!r}."
+            ),
+            details={"error": "invalid_scenario_meta"},
+        )
     tag = str(meta.get("tag", ""))
     is_asset_modes = tag == "asset_modes" or (
         set(gold) == {"asset", "failure_modes"}
@@ -201,12 +224,6 @@ def fmea_score(scenario: Scenario, answer: str, trajectory_text: str) -> ScorerR
     rubric_weighted_score = sum(weights[name] * dimensions[name] for name in weights)
     precision, recall = dimensions["precision"], dimensions["coverage"]
     semantic_f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
-    threshold_value = meta.get("f1_pass_threshold", _DEFAULT_F1_PASS_THRESHOLD)
-    f1_pass_threshold = (
-        float(threshold_value)
-        if isinstance(threshold_value, (int, float))
-        else _DEFAULT_F1_PASS_THRESHOLD
-    )
     # Compare at the reported precision: 2PR/(P+R) lands just under an exact
     # boundary (6/7 and 6/8 give 0.7999999999999999), failing a 0.8 threshold.
     score = round(semantic_f1, 6)
