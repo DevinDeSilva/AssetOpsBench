@@ -63,6 +63,16 @@ dev = [
     "ipykernel>=7.3.0",
     "jupyterlab>=4.6.1",
 ]
+# Dependencies used by the dataset creation utilities and example notebooks.
+dataset-creation = [
+    "jsonlines==4.0.0",
+    "jupyterlab>=4.6.1",
+    "matplotlib>=3.8.0,<4",
+    "nltk>=3.9.1,<4",
+    "pymupdf>=1.25.5,<2",
+    "seaborn>=0.13.0,<1",
+    "sentence-transformers>=4.1.0,<5",
+]
 # Optional heavy ML deps for the TSFM server.
 tsfm = [
     "torch>=2.0",
@@ -86,7 +96,7 @@ constraint-dependencies = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "dataset"]
 norecursedirs = ["src/tmp"]
 anyio_mode = "auto"
 filterwarnings = [
