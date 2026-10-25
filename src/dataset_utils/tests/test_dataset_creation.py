@@ -1,7 +1,13 @@
+import pickle
+
+import pytest
+
 from dataset_utils.config import DatasetCreationConfig
 from dataset_utils.creation import create_dataset, load_dataset, save_dataset
+from dataset_utils.paths import DATASET_DIR_ENV, get_dataset_dir
 from dataset_utils.reader import ADIQDataset
-from utils.tree import Node
+from dataset_utils.utils import file_handle
+from dataset_utils.utils.tree import Node
 
 
 def _rule(
@@ -83,3 +89,34 @@ def test_create_save_and_load_dataset(tmp_path):
 
     assert loaded["creation_config"] == dataset["creation_config"]
     assert len(reader.get_questions()) == len(dataset["questions"])
+
+
+def test_dataset_dir_uses_explicit_path_or_environment(monkeypatch, tmp_path):
+    configured = tmp_path / "configured"
+    explicit = tmp_path / "explicit"
+    monkeypatch.setenv(DATASET_DIR_ENV, str(configured))
+
+    assert get_dataset_dir() == configured.resolve()
+    assert get_dataset_dir(explicit) == explicit.resolve()
+
+
+def test_dataset_dir_is_required(monkeypatch):
+    monkeypatch.delenv(DATASET_DIR_ENV, raising=False)
+
+    with pytest.raises(RuntimeError, match=DATASET_DIR_ENV):
+        get_dataset_dir()
+
+
+def test_load_pickle_remaps_legacy_node_module(tmp_path):
+    node = Node.generate_graph("temperature is high OR pressure is low")
+    payload = pickle.dumps(node, protocol=0)
+    legacy_payload = payload.replace(b"dataset_utils.utils.tree", b"utils.tree")
+    assert legacy_payload != payload
+
+    path = tmp_path / "legacy-tree.pkl"
+    path.write_bytes(legacy_payload)
+
+    loaded = file_handle.load_pickle(path)
+
+    assert isinstance(loaded, Node)
+    assert loaded.statement == node.statement

@@ -3,9 +3,4 @@ Contains all forms of augmentations to a question thus input should be a questio
 augmentation while the output should always be a question object
 """
 
-from .question import Question, QuestionDifficulty
-
-
-TAXONOMY = [
-    ""
-]
+TAXONOMY = [""]

@@ -7,14 +7,15 @@ def findParent(parent, x):
     parent[x] = findParent(parent, parent[x])
     return parent[x]
 
+
 # Function to unite two subsets
 def unionSets(parent, x, y):
     px = findParent(parent, x)
     py = findParent(parent, y)
     if px != py:
-
         # Union operation
         parent[px] = py
+
 
 def getComponents(V, edges):
 

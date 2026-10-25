@@ -1,31 +1,31 @@
-
-from typing import Dict, Any
 import copy
 import string
 from enum import Enum
+from typing import Any, Dict
+
 
 class QuestionTemplateMode(Enum):
-    random = 'random'
-    pre_select = 'pre-select'
+    random = "random"
+    pre_select = "pre-select"
 
 
 class DatasetCreationConfig:
-    #default values
+    # default values
     subject = "diagnosis_sense_simple_question_analysis"
     db_acronym = "ADIQ"
     db_name = "AssetDiagnosisIQ"
-    option_choices_string:str = string.ascii_uppercase
+    option_choices_string: str = string.ascii_uppercase
     question_first = None
     text_type = "choice"
     relevancy = None
     num_options = 3
-    question_template_mode:QuestionTemplateMode = QuestionTemplateMode.pre_select
+    question_template_mode: QuestionTemplateMode = QuestionTemplateMode.pre_select
     question_template_pre_select_options = [0]
     question_template_random_count = 1
     sel_random_sample = 10
     elem_random_sample = 25
-    n_least_sim_rules= 25
-    question_condition_template =  """
+    n_least_sim_rules = 25
+    question_condition_template = """
 ## Asset Description:
 {asset_type}: {asset_description}
 
@@ -35,9 +35,9 @@ class DatasetCreationConfig:
 {question_prompt}
 """
 
-    def __init__(self, config_dict:Dict[str,Any]) -> None:
-        for k,v in config_dict.items():
-            setattr(self,k,v)
+    def __init__(self, config_dict: Dict[str, Any]) -> None:
+        for k, v in config_dict.items():
+            setattr(self, k, v)
 
     def to_config(self) -> Dict[str, Any]:
         config = {}
@@ -60,8 +60,10 @@ class DatasetCreationConfig:
         return config
 
     @staticmethod
-    def from_dict(_dict:Dict[str,str]) -> Any:
-        config_dict:Dict[str,Any] = copy.deepcopy(_dict)
-        config_dict["question_template_mode"] = QuestionTemplateMode(config_dict["question_template_mode"])
+    def from_dict(_dict: Dict[str, str]) -> Any:
+        config_dict: Dict[str, Any] = copy.deepcopy(_dict)
+        config_dict["question_template_mode"] = QuestionTemplateMode(
+            config_dict["question_template_mode"]
+        )
 
         return DatasetCreationConfig(config_dict)
