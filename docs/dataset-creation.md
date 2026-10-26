@@ -20,16 +20,17 @@ named by `ASSETOPSBENCH_DATASET_DIR` (see [Setup](#setup)):
 
 ## Variants
 
-Names follow the paper. Each notebook reads from and writes to
+Names follow the paper. The DiagnosticIQ notebooks are in `notebook/` and
+their names start with `diagnosticiq_`. Each notebook reads from and writes to
 `$ASSETOPSBENCH_DATASET_DIR/datasets/` unless noted.
 
 | Paper name | Notebook | Reads | Writes | V3.1 release folder |
 | --- | --- | --- | --- | --- |
-| DiagnosticIQ | `simple_dataset_creation.ipynb` | `extracted/` artifacts | `DiagnosticIQ` | `DiagnosticIQV3.1` |
-| DiagnosticIQ Pro | `complex_dataset_creation.ipynb` | `DiagnosticIQ` | `DiagnosticIQPro` | `DiagnosticIQProV3.1` |
-| DiagnosticIQ Pert | `simple_perteval_simple_dataset_creation.ipynb` | `DiagnosticIQPro` | `DiagnosticIQPert` | `DiagnosticIQPertV3.1` |
-| DiagnosticIQ Verbose | `verbose_dataset_creation.ipynb` | `DiagnosticIQ`, `verbose/` | `DiagnosticIQVerbose` | `DiagnosticIQVerbV3.1` |
-| Test rules | `simple_test_dataset_creation.ipynb` | `test_datasets/`, `DiagnosticIQ` | `test_datasets/datasets/DiagnosticIQTest` | — |
+| DiagnosticIQ | `diagnosticiq_simple_dataset_creation.ipynb` | `extracted/` artifacts | `DiagnosticIQ` | `DiagnosticIQV3.1` |
+| DiagnosticIQ Pro | `diagnosticiq_complex_dataset_creation.ipynb` | `DiagnosticIQ` | `DiagnosticIQPro` | `DiagnosticIQProV3.1` |
+| DiagnosticIQ Pert | `diagnosticiq_simple_perteval_simple_dataset_creation.ipynb` | `DiagnosticIQPro` | `DiagnosticIQPert` | `DiagnosticIQPertV3.1` |
+| DiagnosticIQ Verbose | `diagnosticiq_verbose_dataset_creation.ipynb` | `DiagnosticIQ`, `verbose/` | `DiagnosticIQVerbose` | `DiagnosticIQVerbV3.1` |
+| Test rules | `diagnosticiq_simple_test_dataset_creation.ipynb` | `test_datasets/`, `DiagnosticIQ` | `test_datasets/datasets/DiagnosticIQTest` | — |
 
 DiagnosticIQ Aug and DiagnosticIQ Rationale are not produced by this code.
 
@@ -43,12 +44,12 @@ code base is given in parentheses.
 
 | Step | Notebook | Reads | Writes |
 | --- | --- | --- | --- |
-| 1 | `source_rules_extraction.ipynb` (`scrap_pdf`) | `data/skyspark_rules.pdf` | `extracted/extracted_data.json` |
-| 2 | `source_rules_consistency_check.ipynb` (`consistency_check`) | `extracted/extracted_data.json` | `extracted/observations.rules.json` and three files of incomplete rules |
-| 3 | `source_rules_formatting.ipynb` (`data_formatting`) | the step 2 files | the same files, in place: adds `asset`, splits observations into lists |
-| 4 | `source_rules_formalizing.ipynb` (`formalizing_rules`) | `extracted/observations.rules.json` | `extracted/TreeStruct.pkl` (rule condition trees) |
-| 5 | `source_asset_descriptions.ipynb` (`asset_stats`) | `extracted/observations.rules.json`, `data/alert_events.csv`, `data/equipment_profile.csv`, `data/GRE_Asset_Description.csv` | `extracted/equipment_info/gre_desc.json`, `rule_to_equipment_map.json` |
-| test | `source_test_rules_conversion.ipynb` (`test_datasets/conversions`) | `test_datasets/rule_logic_test2.json` | `test_datasets/TEST_rule_information.json`, `test_datasets/TEST_TreeStruct.pkl` |
+| 1 | `diagnosticiq_source_rules_extraction.ipynb` (`scrap_pdf`) | `data/skyspark_rules.pdf` | `extracted/extracted_data.json` |
+| 2 | `diagnosticiq_source_rules_consistency_check.ipynb` (`consistency_check`) | `extracted/extracted_data.json` | `extracted/observations.rules.json` and three files of incomplete rules |
+| 3 | `diagnosticiq_source_rules_formatting.ipynb` (`data_formatting`) | the step 2 files | the same files, in place: adds `asset`, splits observations into lists |
+| 4 | `diagnosticiq_source_rules_formalizing.ipynb` (`formalizing_rules`) | `extracted/observations.rules.json` | `extracted/TreeStruct.pkl` (rule condition trees) |
+| 5 | `diagnosticiq_source_asset_descriptions.ipynb` (`asset_stats`) | `extracted/observations.rules.json`, `data/alert_events.csv`, `data/equipment_profile.csv`, `data/GRE_Asset_Description.csv` | `extracted/equipment_info/gre_desc.json`, `rule_to_equipment_map.json` |
+| test | `diagnosticiq_source_test_rules_conversion.ipynb` (`test_datasets/conversions`) | `test_datasets/rule_logic_test2.json` | `test_datasets/TEST_rule_information.json`, `test_datasets/TEST_TreeStruct.pkl` |
 
 Step 1 was a legacy notebook marked *DO NOT RUN* in the source code base,
 because running it again overwrites `extracted_data.json`. Step 3 rewrites its
@@ -56,7 +57,7 @@ inputs in place, so run it exactly once on fresh step 2 output.
 
 ### 2. Question generation
 
-`simple_dataset_creation.ipynb` builds DiagnosticIQ:
+`diagnosticiq_simple_dataset_creation.ipynb` builds DiagnosticIQ:
 
 1. **Unique observations.** Observation texts are embedded with
    `all-MiniLM-L6-v2`; pairs above the 0.992 similarity quantile are merged into
@@ -124,7 +125,7 @@ formatted text it inherits.
 >
 > To generate DiagnosticIQ with this configuration, add
 > `"elem_random_sample": 10` to the `DatasetCreationConfig` in
-> `simple_dataset_creation.ipynb`. With the V3.1 rule set this gives the
+> `diagnosticiq_simple_dataset_creation.ipynb`. With the V3.1 rule set this gives the
 > released composition of 6,690 questions (5,180 selection and 1,510
 > elimination).
 >
@@ -235,7 +236,7 @@ uv run pytest src/dataset_utils/tests
 
 ## Existing pickle compatibility
 
-`TreeStruct.pkl` written by `source_rules_formalizing.ipynb` refers to
+`TreeStruct.pkl` written by `diagnosticiq_source_rules_formalizing.ipynb` refers to
 `__main__.Node`, because that notebook defines `Node` inline. Older pickles
 refer to `utils.tree.Node` or `dataset.utils.tree.Node`.
 `dataset_utils.utils.file_handle.load_pickle` maps all three to
