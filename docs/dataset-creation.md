@@ -179,6 +179,12 @@ The Verbose notebook calls watsonx.ai and needs `WATSONX_APIKEY`, `WATSONX_URL`
 and `WATSONX_PROJECT_ID` in the environment or the repository `.env` (see
 `.env.public`).
 
+The V3.1 source artifacts were generated with sentence-transformers 4.1.0,
+torch 2.7.0 and transformers 4.52.4. This repository locks sentence-transformers
+4.1.0, but torch and transformers follow the repository lock. The embedding-based
+steps (observation merging and rule-to-rule similarity) can therefore shift
+slightly when they are recomputed.
+
 Start Jupyter from the repository root. The notebooks do not depend on the
 process working directory:
 
@@ -219,6 +225,12 @@ ds = ADIQDataset(datasets_dir / "DiagnosticIQ")
 for q in ds.questions:
     question_formatting(q, ds.asset_descriptions)
 ds.save("DiagnosticIQ", datasets_dir)
+```
+
+## Tests
+
+```bash
+uv run pytest src/dataset_utils/tests
 ```
 
 ## Existing pickle compatibility
