@@ -10,9 +10,17 @@ _LEGACY_PICKLE_MODULES = {
     "utils.tree": "dataset_utils.utils.tree",
 }
 
+# The rule-formalizing notebook defines Node inline, so its TreeStruct.pkl
+# refers to __main__.Node rather than a module path.
+_LEGACY_PICKLE_CLASSES = {
+    ("__main__", "Node"): ("dataset_utils.utils.tree", "Node"),
+}
+
 
 class _CompatibleUnpickler(pickle.Unpickler):
     def find_class(self, module: str, name: str) -> Any:
+        if (module, name) in _LEGACY_PICKLE_CLASSES:
+            module, name = _LEGACY_PICKLE_CLASSES[(module, name)]
         module = _LEGACY_PICKLE_MODULES.get(module, module)
         return super().find_class(module, name)
 

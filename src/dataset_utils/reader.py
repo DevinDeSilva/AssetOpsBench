@@ -3,8 +3,18 @@ import random
 from typing import Any, Dict, List
 
 from .creation import load_dataset
+from .paths import get_dataset_dir
 from .question import Question
 from .utils.file_handle import save_json, save_jsonl
+
+
+def _metadata_loc(loc) -> str:
+    """Return ``loc`` as saved in metadata: relative to the dataset workspace when one is set."""
+    loc = os.fspath(loc)
+    try:
+        return os.path.relpath(loc, get_dataset_dir())
+    except RuntimeError:
+        return loc
 
 
 class ADIQDataset:
@@ -14,11 +24,11 @@ class ADIQDataset:
     rule_info: Dict[str, Any]
 
     def __init__(self, loc: str) -> None:
-        self.loc = loc
-        self.__build_dataset__()
+        self.loc = _metadata_loc(loc)
+        self.__build_dataset__(loc)
 
-    def __build_dataset__(self) -> None:
-        self.data = load_dataset(self.loc)
+    def __build_dataset__(self, loc: str) -> None:
+        self.data = load_dataset(loc)
         for k, v in self.data.items():
             setattr(self, k, v)
 
